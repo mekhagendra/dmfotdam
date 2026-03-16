@@ -1,0 +1,16 @@
+# Data Uploads Directory
+
+This directory contains uploaded files for analysis.
+
+Files uploaded here will be processed by the backend services for threat detection and analysis.
+
+## File Types Supported
+- PDF documents
+- Word documents (.docx)
+- Text files (.txt)
+- Image files (with OCR processing)
+
+## Security Notes
+- All uploaded files are scanned for malware
+- File size is limited to 50MB by default
+- Files are automatically cleaned up after processing (configurable retention period)

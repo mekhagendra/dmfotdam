@@ -6,7 +6,11 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from contextlib import asynccontextmanager
+import os
 import uvicorn
+
+# Ensure working directory is the backend folder
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from app.core.config import get_settings
 from app.core.database import create_db_and_tables
@@ -25,6 +29,12 @@ async def lifespan(app: FastAPI):
     """Application lifespan management"""
     # Startup
     await create_db_and_tables()
+
+    # Pre-load ML models so first request isn't slow
+    from app.services.ml_service import MLService
+    ml = MLService()
+    ml.load_models()
+
     yield
     # Shutdown - cleanup tasks if needed
 

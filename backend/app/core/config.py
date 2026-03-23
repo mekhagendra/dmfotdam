@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8000
     
-    # Database
-    DATABASE_URL: str = "postgresql://user:password@localhost:5432/tdm_db"
+    # Database (default SQLite for local dev; use postgresql:// in production)
+    DATABASE_URL: str = "sqlite+aiosqlite:///./data/tdm.db"
     
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 @lru_cache()

@@ -1,12 +1,14 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useUploadDocument, useAnalyzeText, useUploadHistory } from '../hooks/useDetection';
-import { AnalysisResult } from '../services/detection.service';
+import { AnalysisResult, detectionService } from '../services/detection.service';
 import ThreatBadge from '../components/ThreatBadge';
 
 const Upload: React.FC = () => {
   const [textInput, setTextInput] = useState('');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [documentReport, setDocumentReport] = useState<AnalysisResult | null>(null);
   const uploadMutation = useUploadDocument();
   const analyzeMutation = useAnalyzeText();
   const { data: history, isLoading: historyLoading } = useUploadHistory();
@@ -14,10 +16,11 @@ const Upload: React.FC = () => {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
-        uploadMutation.mutate(acceptedFiles[0]);
+        setSelectedFile(acceptedFiles[0]);
+        setDocumentReport(null);
       }
     },
-    [uploadMutation]
+    []
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -34,6 +37,18 @@ const Upload: React.FC = () => {
     maxFiles: 1,
     maxSize: 50 * 1024 * 1024, // 50MB
   });
+
+  const handleDocumentAnalysis = async () => {
+    if (!selectedFile) return;
+    try {
+      uploadMutation.reset();
+      const response = await uploadMutation.mutateAsync(selectedFile);
+      const result = await detectionService.getAnalysisResult(response.analysis_id);
+      setDocumentReport(result);
+    } catch {
+      // error toast is shown by the mutation's onError callback
+    }
+  };
 
   const handleTextAnalysis = async () => {
     if (textInput.trim().length < 10) return;
@@ -57,6 +72,13 @@ const Upload: React.FC = () => {
             <p className="text-gray-500">Uploading and analyzing...</p>
           ) : isDragActive ? (
             <p className="text-primary-600 font-medium">Drop the file here</p>
+          ) : selectedFile ? (
+            <div>
+              <p className="text-primary-700 font-medium">{selectedFile.name}</p>
+              <p className="text-sm text-gray-400 mt-1">
+                {(selectedFile.size / 1024).toFixed(1)} KB — click or drop to change file
+              </p>
+            </div>
           ) : (
             <div>
               <p className="text-gray-600 mb-2">Drag and drop a file here, or click to select</p>
@@ -64,12 +86,33 @@ const Upload: React.FC = () => {
             </div>
           )}
         </div>
-        {uploadMutation.data && (
-          <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-md">
-            <p className="text-green-700 font-medium">
-              File uploaded: {uploadMutation.data.document.original_filename}
-            </p>
-            <p className="text-sm text-green-600">Analysis ID: {uploadMutation.data.analysis_id}</p>
+
+        {selectedFile && (
+          <button
+            onClick={handleDocumentAnalysis}
+            disabled={uploadMutation.isLoading}
+            className="mt-3 bg-primary-600 text-white py-2 px-6 rounded-md hover:bg-primary-700 disabled:opacity-50 font-medium"
+          >
+            {uploadMutation.isLoading ? 'Analyzing...' : 'Analyze'}
+          </button>
+        )}
+
+        {documentReport && (
+          <div className="mt-4 p-4 bg-gray-50 border rounded-md space-y-2">
+            <div className="flex items-center gap-3">
+              <span className="font-medium">Threat Level:</span>
+              <ThreatBadge level={documentReport.threat_level || 'low'} />
+              <span className="text-sm text-gray-500">
+                Score: {documentReport.threat_score?.toFixed(4)}
+              </span>
+            </div>
+            <p className="text-sm text-gray-700">{documentReport.summary}</p>
+            {documentReport.keywords && documentReport.keywords.length > 0 && (
+              <div>
+                <span className="text-sm font-medium">Keywords: </span>
+                <span className="text-sm text-gray-600">{documentReport.keywords.join(', ')}</span>
+              </div>
+            )}
           </div>
         )}
       </div>

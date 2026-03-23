@@ -162,13 +162,12 @@ async def get_dashboard_metrics(
 ):
     """Get dashboard metrics"""
     from sqlalchemy import func
+    from app.models.analysis import Analysis
 
     # Total analyses
     total_analyses = (
         await db.execute(select(func.count()).select_from(Analysis))
     ).scalar() or 0
-
-    from app.models.analysis import Analysis
 
     # Alerts counts
     total_alerts = (

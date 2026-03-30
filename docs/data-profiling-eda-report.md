@@ -1,10 +1,10 @@
 # Data Profiling & Exploratory Data Analysis Report
 
-## Global Terrorism Database (GTD) — Comprehensive EDA
+## Extremism Text Classification Dataset -- Comprehensive EDA
 
-**Dataset**: `globalterrorismdb_0718dist.csv`
-**Source**: START (University of Maryland) via Kaggle
-**Analysis Date**: March 2026
+**Dataset**: `extremisim.csv`
+**Source**: Extremism text classification corpus (Kaggle)
+**Analysis Date**: June 2025
 
 ---
 
@@ -12,301 +12,251 @@
 
 | Metric | Value |
 |--------|-------|
-| Total Records | 181,691 |
-| Total Features | 135 |
-| Memory Usage | 629.8 MB |
-| Time Span | 1970–2017 (47 years) |
-| Countries Covered | 205 |
-| Regions | 12 |
-| Unique Terrorist Groups | 3,537 |
-| File Format | CSV (Latin-1 encoding) |
+| Total Records | 2,777 |
+| Total Features | 2 |
+| File Size | ~0.65 MB |
+| Encoding | UTF-8 |
+| File Format | CSV |
 | Duplicate Records | 0 |
-| Duplicate Event IDs | 0 |
+| Missing Messages | 1 (0.04%) |
+| Missing Labels | 0 |
+
+### Feature Summary
+
+| Column | Data Type | Non-Null Count | Unique Values | Description |
+|--------|-----------|----------------|---------------|-------------|
+| `Original_Message` | object (string) | 2,776 | 2,751 | Raw text message to classify |
+| `Extremism_Label` | object (string) | 2,777 | 2 | EXTREMIST or NON_EXTREMIST |
 
 ### Data Type Distribution
 | Type | Count |
 |------|-------|
-| Object (string) | 58 |
-| Float64 | 55 |
-| Int64 | 22 |
+| Object (string) | 2 |
 
 ---
 
-## 2. Key Feature Categories
+## 2. Class Distribution
 
-### 2.1 Temporal Features
-- `iyear` (1970–2017): Year of incident — **no missing values**
-- `imonth` (0–12): Month — 0 indicates unknown month
-- `iday` (0–31): Day — 0 indicates unknown day
-- `approxdate`: Free-text approximate date — 94.9% missing (used when exact date unknown)
+| Label | Count | Percentage |
+|-------|-------|------------|
+| NON_EXTREMIST | 1,454 | 52.4% |
+| EXTREMIST | 1,323 | 47.6% |
 
-### 2.2 Geographic Features
-- `country_txt` / `country`: 205 unique countries — **no missing**
-- `region_txt` / `region`: 12 world regions — **no missing**
-- `provstate`: Province/state — 0.2% missing
-- `city`: City name — 0.2% missing
-- `latitude` / `longitude`: GPS coordinates — 2.5% missing
+**Finding**: The dataset is nearly balanced with a slight majority of NON_EXTREMIST messages (52.4% vs 47.6%). The class imbalance ratio of ~1.1:1 is mild and does not require aggressive resampling techniques. Stratified splitting during model training is sufficient to preserve this distribution.
 
-### 2.3 Attack Characteristics
-- `attacktype1_txt`: 9 attack types — **no missing**
-- `targtype1_txt`: 22 target types — **no missing**
-- `weaptype1_txt`: 12 weapon types — **no missing**
-- `success`: Binary (0/1) — **no missing**
-- `suicide`: Binary (0/1) — **no missing**
-
-### 2.4 Perpetrator Information
-- `gname`: Group name — **no missing** (but 45.6% are "Unknown")
-- `individual`: Whether lone actor (0/1) — **no missing**
-- `nperps`: Number of perpetrators — 39.1% missing
-- `claimed`: Whether attack was claimed — 36.4% missing
-
-### 2.5 Casualty Data
-- `nkill`: Number killed — 5.7% missing
-- `nwound`: Number wounded — 9.0% missing
-- `nkillter`: Perpetrators killed — 36.9% missing
-- `nwoundte`: Perpetrators wounded — 38.1% missing
-
-### 2.6 Text Fields
-- `summary`: Narrative description — **36.4% missing** (available for 115,562 records)
-- `motive`: Attack motive — **72.2% missing** (available for 50,561 records)
+*Visualization*: `01_class_distribution.png`
 
 ---
 
-## 3. Statistical Summary of Key Numeric Features
+## 3. Message Text Statistics
 
-### 3.1 Casualty Statistics
-
-| Feature | Count | Mean | Median | Max | Total | Std Dev |
-|---------|-------|------|--------|-----|-------|---------|
-| nkill | 171,378 | 2.40 | 0.0 | 1,570 | 411,868 | 11.45 |
-| nwound | 165,380 | 3.17 | 0.0 | 8,191 | 523,869 | 28.00 |
-| nkillter | 114,733 | 0.51 | 0.0 | 500 | 58,291 | 4.33 |
-| nwoundte | 112,548 | 0.11 | 0.0 | 200 | 12,061 | 1.34 |
-
-**Key Insight**: Both killed and wounded distributions are extremely right-skewed. The median is 0 for all casualty fields — the majority of attacks result in no casualties. A small number of catastrophic events (outliers) drive the totals.
-
-### 3.2 Temporal Distribution
+### Length Characteristics
 
 | Metric | Value |
 |--------|-------|
-| Peak year | 2014 (16,903 attacks) |
-| Lowest year | 1971 (471 attacks) |
-| Year with missing data | 1993 (not collected) |
-| Growth trend | Dramatic increase from 2004–2014, decline 2015–2017 |
+| Mean message length (chars) | 152.8 |
+| Median message length (chars) | 115.0 |
+| Max message length (chars) | 2,490 |
+| Min message length (chars) | 3 |
+| Mean word count | 23.3 |
+| Median word count | 19.0 |
+| Max word count | 506 |
+| Min word count | 1 |
+| Mean avg word length | 5.2 chars |
+
+### Distribution Notes
+- Message lengths follow a right-skewed distribution with most messages being short to medium length.
+- A small number of outlier messages exceed 1,000 characters, suggesting longer passages or multi-sentence content.
+- The median word count of 19 words indicates most messages are brief statements or social media-like posts.
+- The difference between mean (23.3) and median (19) confirms right-skew from longer outliers.
+
+*Visualizations*: `02_message_length_distribution.png`, `05_avg_word_length.png`, `07_kde_density.png`
 
 ---
 
 ## 4. Data Quality Assessment
 
-### 4.1 Missing Values Analysis
+### 4.1 Missing Values
+| Column | Missing | Percentage |
+|--------|---------|------------|
+| `Original_Message` | 1 | 0.04% |
+| `Extremism_Label` | 0 | 0.00% |
 
-**Columns with no missing values (29/135):**
-Core identifiers and primary classifications are complete — `eventid`, `iyear`, `imonth`, `iday`, `country`, `country_txt`, `region`, `region_txt`, `attacktype1`, `attacktype1_txt`, `targtype1`, `targtype1_txt`, `gname`, `success`, `suicide`, etc.
+**Impact**: Negligible. The single missing message can be safely dropped during preprocessing without affecting analysis quality.
 
-**Columns with >90% missing (62/135):**
-Mostly secondary/tertiary target, weapon, claim, and group fields (e.g., `attacktype3`, `targtype3`, `weaptype4`, `gname3`, `claimmode3`). These represent rare multi-target, multi-weapon, or multi-group events and are expected to be sparse.
+### 4.2 Duplicates
+- **Exact duplicate rows**: 0
+- **Near-duplicate messages**: 26 messages appear more than once (differing only in whitespace or minor character variations)
+- **Unique messages**: 2,751 out of 2,777 total
 
-**Columns with meaningful partial missingness (1%–90%):**
+### 4.3 Data Quality Flags
+- **Empty strings**: 0 messages are empty after stripping whitespace
+- **Very short messages** (< 5 chars): ~12 messages -- may lack sufficient context for classification
+- **Very long messages** (> 1,000 chars): ~25 messages -- potentially multi-paragraph content
+- **Special character issues**: Some messages contain non-ASCII characters, HTML entities, or URL fragments
 
-| Column | Missing % | Impact |
-|--------|-----------|--------|
-| summary | 36.4% | Limits NLP text analysis to 64% of records |
-| motive | 72.2% | Heavy missingness; only useful for subset analysis |
-| claimed | 36.4% | May affect attribution analysis |
-| nperps | 39.1% | Limits perpetrator count analysis |
-| nkill | 5.7% | Low impact; can impute or analyze complete cases |
-| nwound | 9.0% | Moderate; same approach as nkill |
-| latitude/longitude | 2.5% | Low impact on geographic analysis |
-
-**Recommendation**: For primary analysis, focus on the 29 fully-populated core columns. For text mining, use the 115,562 records with summaries. Drop columns with >90% missing as they offer minimal analytical value.
-
-### 4.2 Duplicate Analysis
-- **Exact duplicates**: 0 — No data integrity issues
-- **Duplicate event IDs**: 0 — Every incident has a unique identifier
-
-### 4.3 Outlier Analysis
-
-**Casualty Outliers (IQR Method):**
-- nkill > 5 (upper fence): 16,242 records (9.5% of non-null)
-- Most extreme: 1,570 killed in a single event (likely 9/11 WTC attack)
-- Second most extreme: 8,191 wounded in a single event
-
-**Recommendation**: Use capping (winsorization) or log transformation for casualty features in ML models. Do not remove outliers — they represent genuine high-impact events critical for threat detection.
-
-### 4.4 Data Gaps
-- **1993**: Entire year missing — GTD data was not collected that year. This creates a gap in temporal trend analysis.
-- **Post-2017**: Dataset ends in 2017. No recent events available.
+*Visualization*: `12_data_quality.png`
 
 ---
 
-## 5. Exploratory Analysis Findings
+## 5. Feature Engineering (Derived Features)
 
-### 5.1 Temporal Trends
-*(See: 01_yearly_trend.png)*
+The following features were derived from the raw text for analysis:
 
-- Terrorism incidents increased dramatically from ~1,000/year (early 2000s) to a peak of **16,903 in 2014**, largely driven by conflicts in Iraq, Syria, Afghanistan, and Nigeria.
-- A decline is observed from 2015–2017, coinciding with the territorial losses of ISIL.
-- The late 1970s–1980s saw a first wave of terrorism (Cold War era conflicts).
-- 1993 is entirely missing from the dataset.
+| Feature | Description | Mean | Median |
+|---------|-------------|------|--------|
+| `msg_len` | Character count of message | 152.8 | 115.0 |
+| `word_count` | Token count (whitespace split) | 23.3 | 19.0 |
+| `avg_word_len` | Mean characters per word | 5.2 | 5.0 |
+| `has_exclamation` | Contains '!' (boolean) | 19.2% | -- |
+| `has_caps_word` | Contains all-caps word (boolean) | 45.8% | -- |
+| `unique_word_ratio` | Unique words / total words | 0.87 | 0.90 |
 
-### 5.2 Geographic Distribution
-*(See: 02_top_countries.png, 06_regional_analysis.png, 13_geographic_scatter.png)*
+### Feature Observations
+- **Vocabulary richness** (unique_word_ratio) is high overall (mean 0.87), indicating diverse vocabulary usage across messages.
+- **Exclamation marks** are present in ~19% of messages and may correlate with emotional or aggressive tone.
+- **Capitalized words** appear in ~46% of messages, potentially indicating emphasis or shouting, which may be more common in extremist content.
 
-**Top 5 Countries:**
-1. Iraq — 24,636 attacks (13.6%)
-2. Pakistan — 14,368 (7.9%)
-3. Afghanistan — 12,731 (7.0%)
-4. India — 11,960 (6.6%)
-5. Colombia — 8,306 (4.6%)
-
-**Regional Breakdown:**
-1. Middle East & North Africa — 50,474 (27.8%)
-2. South Asia — 44,974 (24.7%)
-3. South America — 18,978 (10.4%)
-4. Sub-Saharan Africa — 17,550 (9.7%)
-5. Western Europe — 16,639 (9.2%)
-
-**Key Insight**: The Middle East & South Asia account for **52.5%** of all terrorism globally. Western Europe, despite prominent high-profile attacks, ranks 5th by volume.
-
-### 5.3 Attack Types
-*(See: 03_attack_types.png)*
-
-| Attack Type | Count | % |
-|-------------|-------|---|
-| Bombing/Explosion | 88,255 | 48.6% |
-| Armed Assault | 42,669 | 23.5% |
-| Assassination | 19,312 | 10.6% |
-| Hostage Taking (Kidnapping) | 11,158 | 6.1% |
-| Facility/Infrastructure Attack | 10,356 | 5.7% |
-| Unknown | 7,276 | 4.0% |
-| Unarmed Assault | 1,015 | 0.6% |
-| Hostage Taking (Barricade) | 991 | 0.5% |
-| Hijacking | 659 | 0.4% |
-
-**Key Insight**: Bombings dominate at nearly half of all attacks. Combined with Armed Assault, these two types account for **72.1%** of all terrorism.
-
-### 5.4 Target Types
-*(See: 04_target_types.png)*
-
-Top 5 targets: Private Citizens (24.0%), Military (15.4%), Police (13.5%), Government (11.7%), Business (11.4%). Civilian targeting being the #1 category underscores the indiscriminate nature of terrorism.
-
-### 5.5 Weapon Types
-*(See: 05_weapon_types.png)*
-
-Explosives (50.9%) and Firearms (32.2%) account for **83.1%** of all attacks. Chemical, biological, and radiological weapons are extremely rare (<0.2% combined).
-
-### 5.6 Casualty Patterns
-*(See: 07_casualty_analysis.png)*
-
-- **Total killed**: 411,868 across all recorded incidents
-- **Total wounded**: 523,869
-- **Most lethal attack type**: Hostage Taking (Barricade) has the highest average fatalities (8.34/attack), followed by Armed Assault (3.74)
-- Casualty trends mirror the overall attack trend — peaking around 2014
-- The majority of attacks (median = 0 killed) are non-lethal
-
-### 5.7 Terrorist Groups
-*(See: 08_terror_groups.png)*
-
-**Attribution Challenge**: 82,782 attacks (45.6%) have "Unknown" perpetrators.
-
-**Top Known Groups by Attack Count:**
-1. Taliban — 7,478
-2. ISIL — 5,613
-3. Shining Path — 4,555
-4. FMLN — 3,351
-5. Al-Shabaab — 3,288
-
-**Most Lethal Groups (by total kills):** Taliban, ISIL, Boko Haram, Al-Shabaab, and Sri Lankan LTTE dominate.
-
-### 5.8 Success Rate Analysis
-*(See: 09_success_analysis.png)*
-
-- Overall success rate: **89.0%** — most attempted attacks succeed
-- Hostage/barricade situations have the lowest success rate (~66%)
-- Bombing/Explosion has a very high success rate (~91%)
-- Success rate has remained remarkably stable over time (80–95%)
-
-### 5.9 Suicide Attacks
-*(See: 10_suicide_analysis.png)*
-
-- Total suicide attacks: 6,633 (3.7% of all attacks)
-- Suicide attacks are **far more lethal**: average 10+ killed vs. 2.1 for non-suicide
-- Dramatic increase post-2001, peaking around 2014-2016 (linked to ISIL operations)
-
-### 5.10 Feature Correlations
-*(See: 11_correlation_heatmap.png)*
-
-Notable correlations:
-- `nkill` ↔ `nwound`: 0.57 (moderate positive — deadly attacks tend to wound more)
-- `suicide` ↔ `nkill`: 0.13 (weak but positive — suicide attacks are deadlier)
-- `iyear` ↔ `claimed`: 0.26 (claims became more common in recent years)
-- `suicide` ↔ `claimed`: 0.21 (suicide attacks are more often claimed)
-- Most attack/target type codes show weak correlations, suggesting they are relatively independent features
-
-### 5.11 Seasonal Patterns
-*(See: 14_seasonal_patterns.png)*
-
-- Attacks are relatively evenly distributed across months, with slight peaks in **March, May, and July**
-- No strong day-of-month pattern, though the 1st and 15th of each month show slightly elevated counts
-- No dramatic seasonal effect — terrorism is not strongly seasonal
+*Visualizations*: `06_vocabulary_richness.png`, `08_feature_comparison.png`
 
 ---
 
-## 6. Data Quality Recommendations
+## 6. EDA Findings
 
-### For Machine Learning Pipeline
-1. **Feature Selection**: Use the ~30 core columns with low/no missing values for primary modeling. Drop 62 columns with >90% missingness.
-2. **Text Features**: Leverage `summary` (64% available) and `motive` (28% available) for NLP-based threat classification.
-3. **Target Variable**: Use `success` (binary), `suicide` (binary), or binned `nkill` for classification tasks. Use `attacktype1_txt` or `weaptype1_txt` for multi-class classification.
-4. **Imputation**: For `nkill`/`nwound` (5-9% missing), median imputation (0) is appropriate given the distribution.
-5. **Encoding**: One-hot encode low-cardinality categoricals (attack type, weapon type). Use target encoding for high-cardinality features (country, group name).
-6. **Scaling**: Apply log1p transformation to `nkill`, `nwound` due to extreme right skew.
-7. **Temporal Split**: Use time-based train/test split (e.g., train on 1970–2014, test on 2015–2017) to avoid data leakage.
+### 6.1 N-gram Analysis
+- Top unigrams and bigrams reveal distinct vocabulary patterns between EXTREMIST and NON_EXTREMIST classes.
+- Extremist messages tend to contain more ideological and inflammatory language.
+- NON_EXTREMIST messages show more neutral or general conversational patterns.
 
-### For Text Mining
-1. The `summary` field provides rich free-text narratives suitable for TF-IDF, word embeddings, or transformer-based analysis.
-2. Combine `summary` + `motive` for maximum text coverage.
-3. Use attack type and threat level as supervised labels for text classification models.
+*Visualization*: `03_top_ngrams.png`
 
-### For Monitoring System
-1. The GTD's attack type and threat categorizations can inform the rule-based keyword detection already implemented in the `TextAnalyzer` service.
-2. Extract common terrorism-related terminology from the `summary` field to enhance keyword dictionaries.
-3. Use regional and temporal patterns to calibrate threat scoring weights.
+### 6.2 Feature Correlations
+- Message length and word count are strongly positively correlated (expected).
+- Average word length shows weak correlation with extremism label, suggesting vocabulary complexity alone is not a strong differentiator.
+- Unique word ratio has a slight negative correlation with message length (longer messages tend to repeat words more).
+
+*Visualization*: `04_correlation_heatmap.png`
+
+### 6.3 Class-Conditional Distributions
+- **Message length**: EXTREMIST messages tend to be slightly longer on average than NON_EXTREMIST messages, but distributions overlap substantially.
+- **Word count**: Similar pattern to message length -- slight difference in means but large overlap.
+- **Average word length**: Nearly identical distributions across classes, confirming that word complexity is not a strong class separator.
+- **Vocabulary richness**: Both classes show similar unique word ratios.
+
+*Visualizations*: `07_kde_density.png`, `08_feature_comparison.png`
+
+### 6.4 Outlier Analysis
+- Box plot analysis identifies outlier messages with extreme lengths in both classes.
+- Outliers are present in both EXTREMIST and NON_EXTREMIST classes, so they do not indicate systematic labeling issues.
+- Very short messages (< 5 words) may be challenging for TF-IDF-based models due to sparse feature vectors.
+
+*Visualization*: `09_outlier_analysis.png`
+
+### 6.5 Punctuation and Formatting Patterns
+- Exclamation mark usage, question mark frequency, and capitalization patterns were analyzed per class.
+- These stylistic features may provide additional discriminative signals beyond pure lexical content.
+
+*Visualization*: `10_punctuation_analysis.png`
+
+### 6.6 Term Frequency Analysis
+- TF-IDF-weighted term importance analysis reveals the most discriminative terms per class.
+- High-frequency terms in EXTREMIST messages differ meaningfully from NON_EXTREMIST high-frequency terms.
+- This supports the viability of a TF-IDF + linear classifier approach.
+
+*Visualization*: `11_term_frequency.png`
 
 ---
 
 ## 7. Visualization Index
 
-All visualizations are saved in `backend/data/datasets/eda_output/`:
+All EDA visualizations are stored in `backend/data/datasets/eda_output/`:
 
-| File | Description |
-|------|-------------|
-| `01_yearly_trend.png` | Global terrorism incidents over time (1970–2017) |
-| `02_top_countries.png` | Top 15 countries by number of attacks |
-| `03_attack_types.png` | Attack type distribution (pie + bar) |
-| `04_target_types.png` | Top 15 target types |
-| `05_weapon_types.png` | Weapon type distribution |
-| `06_regional_analysis.png` | Regional counts + trend by top 5 regions |
-| `07_casualty_analysis.png` | Casualty distributions, trends, and lethality by attack type |
-| `08_terror_groups.png` | Top 15 groups by attacks and by lethality |
-| `09_success_analysis.png` | Attack success rates by type and over time |
-| `10_suicide_analysis.png` | Suicide attack trends and comparative lethality |
-| `11_correlation_heatmap.png` | Correlation matrix of 15 key numeric features |
-| `12_missing_values.png` | Missing value percentages for columns with 1–99% missing |
-| `13_geographic_scatter.png` | Geographic scatter of attacks colored by year |
-| `14_seasonal_patterns.png` | Monthly and day-of-month attack distributions |
-| `15_feature_distributions.png` | Box plots and histograms for key features |
+| # | File | Description |
+|---|------|-------------|
+| 01 | `01_class_distribution.png` | Bar chart of EXTREMIST vs NON_EXTREMIST label counts |
+| 02 | `02_message_length_distribution.png` | Histogram of message character lengths by class |
+| 03 | `03_top_ngrams.png` | Top unigrams and bigrams per class |
+| 04 | `04_correlation_heatmap.png` | Correlation matrix of derived numeric features |
+| 05 | `05_avg_word_length.png` | Distribution of average word length per message |
+| 06 | `06_vocabulary_richness.png` | Unique word ratio distribution by class |
+| 07 | `07_kde_density.png` | KDE density plots of message length and word count |
+| 08 | `08_feature_comparison.png` | Side-by-side feature comparison across classes |
+| 09 | `09_outlier_analysis.png` | Box plots identifying outlier messages |
+| 10 | `10_punctuation_analysis.png` | Punctuation pattern analysis per class |
+| 11 | `11_term_frequency.png` | TF-IDF term importance comparison |
+| 12 | `12_data_quality.png` | Data quality and completeness overview |
 
 ---
 
-## 8. Domain Context: Cybersecurity & Terrorism Data Mining
+## 8. Domain Context
 
-The Global Terrorism Database provides a foundation for understanding terrorism through data mining by covering:
+### Extremism Detection in Text
+This dataset supports a binary classification task: determining whether a given text message contains extremist content. The task is relevant to:
 
-- **Pattern Recognition**: Temporal clustering (e.g., 2012–2014 surge) reveals conflict escalation windows
-- **Geographic Hotspot Detection**: Concentrated activity in Middle East/South Asia enables region-specific models
-- **Group Behavior Analysis**: Attack type preferences, target selection, and lethality profiles differ by group
-- **Emerging Threat Indicators**: Rising suicide attack rates, expanding geographic spread, and new group emergence serve as early warning signals
-- **Text Intelligence**: Summary narratives contain entity references, location mentions, and tactic descriptions amenable to NLP extraction
+- **Content moderation**: Automated flagging of extremist material on social media platforms
+- **Intelligence analysis**: Screening large volumes of text for threat indicators
+- **Counter-narratives**: Understanding the linguistic patterns of extremist messaging to develop counter-strategies
 
-This baseline understanding directly informs the TDM system's threat detection algorithms, keyword dictionaries, and threat scoring calibration.
+### Challenges Specific to This Domain
+1. **Context sensitivity**: Words that appear extremist in isolation may be neutral in context (e.g., news reporting about extremism)
+2. **Evolving language**: Extremist vocabulary evolves over time to evade detection
+3. **Subjectivity**: The boundary between "extreme" political speech and actionable extremist content is debatable
+4. **Class overlap**: Many messages contain ambiguous language that could be classified either way
+
+---
+
+## 9. Recommendations
+
+### Data Preparation
+1. **Drop the single missing message** -- negligible impact on dataset size.
+2. **Consider filtering very short messages** (< 5 chars) that may not contain meaningful content.
+3. **Normalize text**: lowercase, strip extra whitespace, remove URLs and HTML artifacts before model training.
+4. **Preserve case information as a feature** (has_caps_word) rather than discarding during normalization.
+
+### Modeling Approach
+1. **TF-IDF + Linear Classifier** is a strong baseline for this dataset size and type. Current pipeline achieves 82% accuracy.
+2. **Cross-validation** should be used instead of a single train/test split to get more robust performance estimates.
+3. **Try additional classifiers**: Logistic Regression, Support Vector Machine, and Random Forest for comparison.
+4. **Hyperparameter tuning**: Grid search over TF-IDF parameters (max_features, ngram_range) and classifier regularization.
+5. **Consider character-level n-grams** as additional features to capture spelling/typing patterns.
+
+### Evaluation
+1. **Use F1-score** as the primary metric rather than accuracy, given the slight class imbalance.
+2. **Generate confusion matrices** to understand which class is harder to predict.
+3. **Analyze misclassified examples** to identify systematic failure patterns.
+4. **Compute ROC-AUC** for probability-calibrated models to assess ranking quality.
+
+---
+
+## 10. Baseline Model Performance
+
+### Model Comparison (5-Fold Stratified Cross-Validation)
+
+| Classifier | CV Accuracy | CV F1 (weighted) |
+|------------|-------------|-------------------|
+| SGD (Modified Huber) | 0.8105 (+/- 0.0197) | 0.8105 (+/- 0.0197) |
+| Logistic Regression | 0.8221 (+/- 0.0210) | 0.8220 (+/- 0.0211) |
+| Random Forest (300 trees) | 0.8206 (+/- 0.0110) | 0.8206 (+/- 0.0110) |
+| **Linear SVC** | **0.8253 (+/- 0.0151)** | **0.8252 (+/- 0.0152)** |
+
+### Best Model: Linear SVC (Calibrated)
+
+| Metric | Value |
+|--------|-------|
+| Test Accuracy | 83.6% |
+| Test F1 (weighted) | 0.8364 |
+| ROC-AUC | 0.9080 |
+| True Positives (high) | 221 |
+| False Negatives (high) | 44 |
+| False Positives (low misclassified as high) | 47 |
+| True Negatives (low) | 244 |
+
+### Pipeline Configuration
+- **Vectorizer**: TF-IDF (30K features, 1-2 grams, min_df=3, max_df=0.95, sublinear_tf)
+- **Classifier**: CalibratedClassifierCV(LinearSVC, cv=3) with balanced class weights
+- **Split**: 80/20 stratified train/test
+- **Cross-validation**: 5-fold stratified
+
+*Visualizations*: `13_model_comparison.png`, `14_confusion_matrix.png`, `15_classification_report_heatmap.png`
+
+**Next Steps**: Consider ensemble methods, character-level n-grams, and error analysis on misclassified examples. See `backend/scripts/train_models.py` and `backend/data/models/training_summary.json`.

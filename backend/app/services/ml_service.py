@@ -1,9 +1,8 @@
 """
-Machine learning service for threat classification.
+Machine learning service for extremism/threat classification.
 
-Uses two scikit-learn models trained on the Global Terrorism Database:
-  1. threat_level_model  — classifies text → low / medium / high / critical
-  2. attack_type_model   — classifies text → attack category
+Uses a scikit-learn model trained on the extremism dataset:
+  threat_level_model  — classifies text → low / high
 """
 
 import os
@@ -38,18 +37,16 @@ class MLService:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._threat_model = None
-            cls._instance._attack_model = None
             cls._instance._loaded = False
         return cls._instance
 
     # ── loading ───────────────────────────────────────────────────────
     def load_models(self) -> bool:
-        """Load both models from disk. Returns True if at least the threat model is available."""
+        """Load the threat model from disk. Returns True if available."""
         if self._loaded:
             return self._threat_model is not None
 
         threat_path = os.path.join(_MODEL_DIR, "threat_level_model.joblib")
-        attack_path = os.path.join(_MODEL_DIR, "attack_type_model.joblib")
 
         try:
             self._threat_model = joblib.load(threat_path)
@@ -57,13 +54,6 @@ class MLService:
         except Exception as e:
             logger.warning("Could not load threat-level model", error=str(e))
             self._threat_model = None
-
-        try:
-            self._attack_model = joblib.load(attack_path)
-            logger.info("Attack-type ML model loaded", path=attack_path)
-        except Exception as e:
-            logger.warning("Could not load attack-type model", error=str(e))
-            self._attack_model = None
 
         self._loaded = True
         return self._threat_model is not None
@@ -77,8 +67,7 @@ class MLService:
         """Run ML classification on arbitrary text.
 
         Returns dict with:
-          ml_threat_level, ml_threat_score, ml_threat_probabilities,
-          ml_attack_type, ml_attack_probabilities, method
+          ml_threat_level, ml_threat_score, ml_threat_probabilities, method
         """
         if not self._loaded:
             self.load_models()
@@ -104,20 +93,5 @@ class MLService:
             }
         except Exception as e:
             logger.error("Threat-level prediction failed", error=str(e))
-
-        # ── attack type ───────────────────────────────────────────────
-        if self._attack_model is not None:
-            try:
-                proba = self._attack_model.predict_proba([text])[0]
-                classes = self._attack_model.classes_
-                pred_idx = int(np.argmax(proba))
-
-                result["ml_attack_type"] = classes[pred_idx]
-                result["ml_attack_probabilities"] = {
-                    c: round(float(proba[i]), 4)
-                    for i, c in enumerate(classes)
-                }
-            except Exception as e:
-                logger.error("Attack-type prediction failed", error=str(e))
 
         return result

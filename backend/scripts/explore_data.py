@@ -1,67 +1,61 @@
-"""Initial dataset exploration script for GTD."""
+"""Initial dataset exploration script for extremism dataset."""
 import pandas as pd
 import numpy as np
 import os
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-df = pd.read_csv('data/datasets/gtd.csv', encoding='latin-1', low_memory=False)
+df = pd.read_csv('data/datasets/extremisim.csv', encoding='utf-8')
 
 print("=" * 60)
-print("GLOBAL TERRORISM DATABASE - INITIAL EXPLORATION")
+print("EXTREMISM DATASET - COMPREHENSIVE EXPLORATION")
 print("=" * 60)
 
 print(f"\nShape: {df.shape[0]:,} rows x {df.shape[1]} columns")
-print(f"Memory usage: {df.memory_usage(deep=True).sum() / 1e6:.1f} MB")
+print(f"Memory usage: {df.memory_usage(deep=True).sum() / 1e6:.2f} MB")
+print(f"\nColumns: {list(df.columns)}")
+print(f"\nData Types:\n{df.dtypes.to_string()}")
 
-print(f"\nYear range: {df['iyear'].min()} - {df['iyear'].max()}")
-print(f"Countries: {df['country_txt'].nunique()}")
-print(f"Regions: {df['region_txt'].nunique()}")
-print(f"Attack types: {df['attacktype1_txt'].nunique()}")
-print(f"Target types: {df['targtype1_txt'].nunique()}")
-print(f"Weapon types: {df['weaptype1_txt'].nunique()}")
-print(f"Terrorist groups: {df['gname'].nunique()}")
-print(f"Successful attacks: {df['success'].sum():,} / {len(df):,} ({df['success'].mean()*100:.1f}%)")
-print(f"Suicide attacks: {df['suicide'].sum():,}")
+print(f"\n--- Missing Values ---")
+print(df.isnull().sum().to_string())
 
-print("\n--- Top 10 Countries ---")
-print(df['country_txt'].value_counts().head(10).to_string())
+print(f"\n--- Duplicates ---")
+print(f"Exact duplicate rows: {df.duplicated().sum()}")
+print(f"Duplicate messages: {df['Original_Message'].duplicated().sum()}")
 
-print("\n--- Attack Types ---")
-print(df['attacktype1_txt'].value_counts().to_string())
+print(f"\n--- Label Distribution ---")
+print(df['Extremism_Label'].value_counts().to_string())
+print(f"\nLabel proportions (%):")
+print((df['Extremism_Label'].value_counts(normalize=True) * 100).round(2).to_string())
 
-print("\n--- Target Types (Top 10) ---")
-print(df['targtype1_txt'].value_counts().head(10).to_string())
+print(f"\n--- Message Length Statistics ---")
+df['msg_len'] = df['Original_Message'].astype(str).str.len()
+df['word_count'] = df['Original_Message'].astype(str).str.split().str.len()
+print("Character length:")
+print(df['msg_len'].describe().to_string())
+print("\nWord count:")
+print(df['word_count'].describe().to_string())
 
-print("\n--- Weapon Types ---")
-print(df['weaptype1_txt'].value_counts().to_string())
+print(f"\n--- Stats by Label ---")
+for label in sorted(df['Extremism_Label'].unique()):
+    subset = df[df['Extremism_Label'] == label]
+    print(f"\n  {label}:")
+    print(f"    Count: {len(subset)}")
+    print(f"    Avg char length: {subset['msg_len'].mean():.1f}")
+    print(f"    Avg word count: {subset['word_count'].mean():.1f}")
+    print(f"    Min words: {subset['word_count'].min()}")
+    print(f"    Max words: {subset['word_count'].max()}")
 
-print("\n--- Top 10 Regions ---")
-print(df['region_txt'].value_counts().head(12).to_string())
+print(f"\n--- Sample Messages ---")
+for label in sorted(df['Extremism_Label'].unique()):
+    print(f"\n  {label} examples:")
+    samples = df[df['Extremism_Label'] == label]['Original_Message'].head(5)
+    for i, s in enumerate(samples):
+        print(f"    {i+1}. {str(s)[:120]}")
 
-print("\n--- Top 15 Groups ---")
-top_groups = df['gname'].value_counts().head(16)
-print(top_groups.to_string())
-
-print("\n--- Yearly Trend ---")
-yearly = df.groupby('iyear').size()
-print(yearly.to_string())
-
-print("\n--- Casualty Statistics ---")
-for col in ['nkill', 'nwound', 'nkillter', 'nwoundte']:
-    if col in df.columns:
-        s = df[col].dropna()
-        print(f"  {col}: count={len(s):,}, mean={s.mean():.2f}, median={s.median():.1f}, max={s.max():.0f}, sum={s.sum():.0f}")
-
-print("\n--- Missing Value Summary (columns with >0% missing, top 20) ---")
-missing = df.isnull().mean().sort_values(ascending=False)
-for col, pct in missing.head(20).items():
-    if pct > 0:
-        print(f"  {col}: {pct*100:.1f}%")
-
-print("\n--- Data Types Summary ---")
-print(df.dtypes.value_counts().to_string())
-
-print("\n--- Duplicate Rows ---")
-print(f"  Exact duplicates: {df.duplicated().sum()}")
-print(f"  Duplicate eventids: {df['eventid'].duplicated().sum()}")
+print(f"\n--- Data Quality ---")
+empty = df['Original_Message'].isna().sum()
+whitespace = (df['Original_Message'].astype(str).str.strip() == '').sum()
+print(f"NaN messages: {empty}")
+print(f"Whitespace-only messages: {whitespace}")
+print(f"Usable rows: {len(df) - empty - whitespace}")

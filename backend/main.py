@@ -29,6 +29,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan management"""
     # Startup
     await create_db_and_tables()
+    await seed_admin_user()
 
     # Pre-load ML models so first request isn't slow
     from app.services.ml_service import MLService
@@ -37,6 +38,37 @@ async def lifespan(app: FastAPI):
 
     yield
     # Shutdown - cleanup tasks if needed
+
+
+async def seed_admin_user():
+    """Ensure the default admin user exists with correct credentials."""
+    from app.core.database import async_session
+    from app.core.security import get_password_hash
+    from app.models.user import User
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.username == "admin"))
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            user = User(
+                username="admin",
+                email="admin@tdm.com",
+                hashed_password=get_password_hash("Admin@123"),
+                full_name="System Administrator",
+                role="admin",
+                is_active=True,
+            )
+            session.add(user)
+        else:
+            # Update existing admin user to match expected credentials
+            user.email = "admin@tdm.com"
+            user.hashed_password = get_password_hash("Admin@123")
+            user.role = "admin"
+            user.is_active = True
+
+        await session.commit()
 
 
 def create_application() -> FastAPI:

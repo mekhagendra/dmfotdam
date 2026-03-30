@@ -320,11 +320,8 @@ class TextAnalyzer:
 
         if ml_result and ml_result.get("method") == "ml_model":
             ml_level = ml_result.get("ml_threat_level", "")
-            ml_attack = ml_result.get("ml_attack_type", "")
             if ml_level:
                 parts.append(f"ML-predicted threat level: {ml_level}.")
-            if ml_attack:
-                parts.append(f"ML-predicted attack type: {ml_attack}.")
 
         if not categories and not (ml_result and ml_result.get("method") == "ml_model"):
             return "No significant threat indicators detected in the analyzed content."

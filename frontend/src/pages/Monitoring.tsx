@@ -99,7 +99,7 @@ const Monitoring: React.FC = () => {
               </label>
               <input
                 {...register('keywords')}
-                placeholder="e.g., security, threat, attack"
+                placeholder="e.g., security, threat, extremism"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>

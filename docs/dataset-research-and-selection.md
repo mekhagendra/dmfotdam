@@ -2,111 +2,115 @@
 
 ## 1. Datasets Identified and Evaluated
 
-### Dataset 1: Global Terrorism Database (GTD)
-- **Source**: START (National Consortium for the Study of Terrorism and Responses to Terrorism), University of Maryland — available on Kaggle (`START-UMD/gtd`)
-- **Size**: 181,691 records × 135 features (155 MB CSV)
-- **Coverage**: 1970–2017, 205 countries, 3,537 terrorist groups
-- **Quality**: High — curated by academic researchers; no duplicate records; 29 columns with zero missing values; well-documented codebook
-- **License**: Open-access for academic/research use under START's terms of use
-- **Relevance**: ★★★★★ — The most comprehensive open-source terrorism incident database worldwide. Directly aligned with our project's terrorism detection and monitoring objectives.
+### Dataset 1: Extremism Text Classification Dataset
+- **Source**: Kaggle -- extremism text classification corpus
+- **Size**: 2,777 records x 2 features (~0.65 MB CSV)
+- **Coverage**: Binary-labeled English text messages (EXTREMIST / NON_EXTREMIST)
+- **Quality**: Good -- near-balanced classes (52.4% / 47.6%), only 1 missing value, 0 duplicate rows, clean UTF-8 encoding
+- **License**: Open-access for academic/research use via Kaggle
+- **Relevance**: ★★★★★ -- Directly aligned with text-based extremism detection and threat classification, which is the core objective of this project.
 
-### Dataset 2: RAND Database of Worldwide Terrorism Incidents (RDWTI)
-- **Source**: RAND Corporation
-- **Size**: ~40,000 records (1968–2009)
-- **Coverage**: Global incidents, fewer features than GTD
-- **Quality**: Good — well-curated but discontinued after 2009
-- **License**: Publicly available but with restrictions on redistribution
-- **Relevance**: ★★★☆☆ — Useful but smaller, older, and no longer maintained. Fewer features limit analysis depth.
-
-### Dataset 3: Armed Conflict Location & Event Data (ACLED)
-- **Source**: ACLED Project (acleddata.com)
-- **Size**: ~1.2 million events (1997–present)
-- **Coverage**: Global political violence and protests
-- **Quality**: Very high — continuously updated, rigorously coded
-- **License**: Requires registration; free for academic use; usage terms restrict commercial distribution
-- **Relevance**: ★★★★☆ — Broader than terrorism (includes riots, protests, battles). Very comprehensive but scope extends beyond pure terrorism.
-
-### Dataset 4: Kaggle Terrorism & Radicalization Dataset
-- **Source**: Various Kaggle contributors (e.g., `muhammetvarl/global-terrorism`)
-- **Size**: Varies — typically derived from GTD with subsets or enrichments
-- **Coverage**: Usually GTD-derivative with additional cleaning
-- **Quality**: Variable — depends on contributor; often pre-cleaned
-- **License**: Typically CC-BY or public domain
-- **Relevance**: ★★★☆☆ — Useful for quick prototyping but derivative; better to use the primary source.
-
-### Dataset 5: NSL-KDD / CIC-IDS Cyber Intrusion Detection Datasets
-- **Source**: University of New Brunswick (UNB)
-- **Size**: NSL-KDD: ~150K records; CICIDS2017: ~2.8M records
-- **Coverage**: Network traffic data with attack labels
-- **Quality**: High — standard benchmark in cybersecurity ML research
+### Dataset 2: Hate Speech and Offensive Language Dataset (Davidson et al.)
+- **Source**: GitHub / academic publication (Davidson et al., 2017)
+- **Size**: ~25,000 tweets x 7 features
+- **Coverage**: Three classes -- hate speech, offensive language, neither
+- **Quality**: Good -- well-cited in NLP research; some labeling noise due to crowdsourced annotation
 - **License**: Open for academic use
-- **Relevance**: ★★☆☆☆ — Focused on network intrusion detection, not terrorism event analysis. Relevant if expanding to cyber-terrorism but not a primary fit for text/document mining.
+- **Relevance**: ★★★★☆ -- Focuses on hate speech rather than extremism directly. Useful for related NLP tasks but does not distinguish extremist ideology from general offensive content.
+
+### Dataset 3: Radicalization and Extremism Online (REO) Corpus
+- **Source**: Various academic compilations
+- **Size**: Variable (typically 1,000-5,000 documents)
+- **Coverage**: Forum posts, social media content from known extremist and non-extremist sources
+- **Quality**: Variable -- depends on specific compilation; often manually curated by researchers
+- **License**: Restricted -- many require institutional access or ethics board approval
+- **Relevance**: ★★★★☆ -- Highly relevant domain-wise but access restrictions and inconsistent formatting limit practicality.
+
+### Dataset 4: Global Terrorism Database (GTD)
+- **Source**: START (University of Maryland) via Kaggle
+- **Size**: 181,691 records x 135 features (155 MB CSV)
+- **Coverage**: Terrorism incident records from 1970-2017 across 205 countries
+- **Quality**: Very high -- curated by academic researchers; comprehensive documentation
+- **License**: Open-access for academic use
+- **Relevance**: ★★★☆☆ -- Structured incident data (not raw text). Excellent for event analysis but does not directly support text classification for extremism detection. Would require extensive preprocessing to create a text classification dataset.
+
+### Dataset 5: Jigsaw Toxic Comment Classification Dataset
+- **Source**: Kaggle (Google Jigsaw)
+- **Size**: ~160,000 comments x 7 label columns
+- **Coverage**: Wikipedia talk page comments labeled for toxic, severe_toxic, obscene, threat, insult, identity_hate
+- **Quality**: High -- large scale, multi-label, well-documented
+- **License**: Open via Kaggle competition
+- **Relevance**: ★★★☆☆ -- Covers general online toxicity rather than specifically extremism. The "threat" label is loosely related but the domain context differs significantly from ideological extremism.
 
 ---
 
 ## 2. Dataset Evaluation Matrix
 
-| Criterion         | GTD  | RDWTI | ACLED | Kaggle Derivatives | NSL-KDD |
-|-------------------|------|-------|-------|-------------------|---------|
-| **Size**          | ★★★★★ | ★★★   | ★★★★★  | ★★★               | ★★★★    |
-| **Quality**       | ★★★★★ | ★★★★  | ★★★★★  | ★★★               | ★★★★    |
-| **Relevance**     | ★★★★★ | ★★★   | ★★★★   | ★★★               | ★★      |
-| **Licensing**     | ★★★★  | ★★★   | ★★★    | ★★★★★              | ★★★★    |
-| **Recency**       | ★★★★  | ★★    | ★★★★★  | ★★★               | ★★★     |
-| **Documentation** | ★★★★★ | ★★★   | ★★★★   | ★★                | ★★★★    |
-| **TOTAL**         | **29** | **18** | **26** | **18**            | **21**  |
+| Criterion         | Extremism Text | Davidson Hate Speech | REO Corpus | GTD  | Jigsaw Toxic |
+|-------------------|----------------|---------------------|------------|------|--------------|
+| **Size**          | ★★★            | ★★★★                | ★★★        | ★★★★★ | ★★★★★        |
+| **Quality**       | ★★★★           | ★★★★                | ★★★        | ★★★★★ | ★★★★         |
+| **Relevance**     | ★★★★★          | ★★★★                | ★★★★       | ★★★  | ★★★          |
+| **Licensing**     | ★★★★★          | ★★★★                | ★★         | ★★★★ | ★★★★★        |
+| **Text-Based**    | ★★★★★          | ★★★★★               | ★★★★★      | ★★   | ★★★★★        |
+| **Binary Labels** | ★★★★★          | ★★★                 | ★★★★       | ★★   | ★★           |
+| **TOTAL**         | **27**         | **23**              | **21**     | **21** | **23**       |
 
 ---
 
-## 3. Final Selection: Global Terrorism Database (GTD)
+## 3. Final Selection: Extremism Text Classification Dataset
 
 ### Decision Rationale
 
-The **Global Terrorism Database (GTD)** is selected as the primary dataset for this project based on the following justification:
+The **Extremism Text Classification Dataset** (`extremisim.csv`) is selected as the primary dataset for this project based on the following justification:
 
-1. **Direct Domain Alignment**: GTD is the world's most comprehensive open-access database on terrorist events, directly matching our project's core objective of terrorism detection and monitoring.
+1. **Direct Domain Alignment**: The dataset provides binary-labeled text messages for extremism detection, which is the exact task our system targets. Unlike incident databases (GTD) or general toxicity corpora (Jigsaw), this dataset directly addresses ideological extremism in text.
 
-2. **Scale and Richness**: With 181,691 incidents across 135 features spanning 47 years (1970–2017), it provides sufficient volume for meaningful statistical analysis and machine learning model training.
+2. **Clean Binary Classification**: The two-class structure (EXTREMIST / NON_EXTREMIST) maps perfectly to our threat detection pipeline, where messages are classified as high-threat or low-threat. No complex multi-label preprocessing is required.
 
-3. **Feature Diversity**: The dataset includes temporal data (year, month, day), geographic data (country, region, lat/long), categorical data (attack type, target type, weapon type, group name), text data (summaries, motives), and numeric data (casualties, perpetrators).
+3. **Near-Balanced Classes**: With 52.4% NON_EXTREMIST and 47.6% EXTREMIST, the dataset does not suffer from severe class imbalance. This simplifies model training and evaluation, and avoids the need for heavy resampling techniques.
 
-4. **Academic Credibility**: Maintained by START at the University of Maryland — a DHS Center of Excellence — it is the gold standard in terrorism research and is cited in thousands of peer-reviewed publications.
+4. **Practical Size**: At 2,777 records, the dataset is large enough for meaningful TF-IDF + classifier training (demonstrated 82% baseline accuracy) while remaining computationally manageable for iterative experimentation.
 
-5. **Text Mining Potential**: The `summary` and `motive` free-text fields (available for 63.6% and 27.8% of records respectively) enable NLP-based analysis that aligns with our document analysis pipeline.
+5. **Data Quality**: Only 1 missing value out of 2,777 records (0.04%), zero duplicate rows, and clean UTF-8 encoding. Minimal preprocessing is needed before model training.
 
-6. **Ground Truth Labels**: Built-in classification fields (`attacktype1_txt`, `targtype1_txt`, `weaptype1_txt`, `success`, `suicide`) provide supervised learning labels without requiring manual annotation.
+6. **Accessibility**: Freely available on Kaggle with no institutional access requirements, ethics board approvals, or redistribution restrictions.
+
+7. **Text Mining Suitability**: Raw text messages are ideal for the NLP-based analysis pipeline that forms the core of our application (TF-IDF vectorization, keyword extraction, threat scoring).
 
 ### Limitations Acknowledged
-- Data stops at 2017 (no recent events)
-- 1993 data is entirely missing (not collected that year)
-- 45.6% of perpetrators are "Unknown" — limits group attribution analysis
-- 62 of 135 columns have >90% missing values (secondary/tertiary targets, weapons, claims)
+- **Moderate size**: 2,777 records is smaller than some alternatives. May limit complex model architectures (e.g., deep learning).
+- **Two features only**: No metadata (timestamps, source, author) limits analysis dimensions.
+- **Static snapshot**: No temporal component -- cannot analyze trends over time.
+- **English only**: Messages are in English, limiting applicability to multilingual contexts.
+- **Label subjectivity**: Binary extremism labeling inherently involves subjective judgment; edge cases exist.
 
 ---
 
 ## 4. Project Scope, Objectives, and Success Criteria
 
 ### Project Scope
-Build a web-based data mining system for terrorism detection and monitoring that:
-- Analyzes the Global Terrorism Database to extract patterns, trends, and threat indicators
+Build a web-based data mining system for extremism detection and threat monitoring that:
+- Analyzes the extremism text dataset to extract patterns and threat indicators
 - Provides document upload and automated text analysis for threat detection
 - Offers real-time monitoring and alerting capabilities
-- Visualizes terrorism data through an interactive dashboard
+- Visualizes threat data through an interactive dashboard
 
 ### Objectives
-1. **Data Understanding**: Complete exploratory data analysis of the GTD to establish baseline domain knowledge
-2. **Pattern Detection**: Identify temporal, geographic, and categorical patterns in terrorism data
-3. **Threat Classification**: Build ML models to classify threat levels from text and categorical features
+1. **Data Understanding**: Complete exploratory data analysis of the extremism dataset to establish baseline domain knowledge
+2. **Pattern Detection**: Identify linguistic and statistical patterns that differentiate extremist from non-extremist text
+3. **Threat Classification**: Build ML models to classify threat levels from text features
 4. **Monitoring System**: Implement real-time content monitoring with automated threat scoring
-5. **Visualization**: Create interactive dashboards for terrorism trend analysis and alert management
+5. **Visualization**: Create interactive dashboards for threat trend analysis and alert management
 
 ### Success Criteria
 | Criteria | Target | Measurement |
 |----------|--------|-------------|
-| Dataset loaded and profiled | Complete | All 135 columns documented, quality assessed |
-| EDA completed with visualizations | ≥12 charts | Covering temporal, geographic, categorical, and correlation analysis |
+| Dataset loaded and profiled | Complete | Both columns documented, quality assessed |
+| EDA completed with visualizations | >= 12 charts | Covering distributions, correlations, text analysis, quality |
 | Data quality issues documented | Complete | Missing values, outliers, and anomalies catalogued |
-| Feature relationships analyzed | Complete | Correlation matrix and cross-tabulations produced |
+| Feature relationships analyzed | Complete | Correlation matrix and class-conditional distributions produced |
 | Baseline domain insights documented | Complete | Written report with key findings and recommendations |
 | Text analysis pipeline functional | Working | Can process uploaded documents and return threat scores |
-| Dashboard displays real data | Functional | Charts and metrics rendered from GTD analysis |
+| ML model baseline accuracy | >= 80% | Threat level classification accuracy on held-out test set |
+| Dashboard displays real data | Functional | Charts and metrics rendered from extremism analysis |

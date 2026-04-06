@@ -1,12 +1,13 @@
-# Terrorism Detection and Monitoring System (TDM)
+# Digital Media Forensics on Terrorism Detection and Monitoring (DMFOTDAM)
 
-A full-stack web data mining application that uses **machine learning** and **natural language processing** to detect and classify potential terrorism-related threats from uploaded documents, structured data files, and free-form text.
+A full-stack web data mining application that uses **machine learning**, **deep learning (BERT)**, and **natural language processing** to detect and classify potential extremism-related threats from uploaded documents, structured data files, and free-form text.
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [How It Works](#how-it-works)
 - [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
@@ -28,12 +29,246 @@ A full-stack web data mining application that uses **machine learning** and **na
 
 ## Overview
 
-The TDM System analyzes text from multiple file formats (PDF, DOCX, TXT, CSV, Excel, JSON) and classifies content using a **hybrid approach** that combines:
+The DMFOTDAM System analyzes text from multiple file formats (PDF, DOCX, TXT, CSV, Excel, JSON) and classifies content using a **multi-layered hybrid approach** that combines:
 
 1. **Rule-based keyword detection** across four threat categories (violence, extremism, planning, financing)
-2. **Machine learning classification** using two scikit-learn models trained on the Global Terrorism Database (181,691 incidents from 1970–2017)
+2. **Traditional ML classifiers** — TF-IDF + Linear SVC, Logistic Regression, Random Forest, SGD (trained on 2,776 extremism-labelled messages)
+3. **Deep learning (BERT)** — Fine-tuned DistilBERT and BERT-base transformer models
+4. **NLP embedding models** — Sentence-BERT embeddings with Logistic Regression and XGBoost classifiers
 
-The final threat score blends both methods: **70% ML + 30% rule-based**, providing robust threat level classification (low / medium / high / critical) and attack type prediction (Bombing/Explosion, Armed Assault, Assassination, Hostage Taking, Infrastructure Attack, Unarmed Assault, Hijacking, Unknown).
+The system prefers the **DistilBERT model** when available (85.6% F1-score, 92.6% ROC-AUC), falling back to the TF-IDF + Linear SVC model (83.6% F1). The final threat score blends ML output with rule-based analysis: **70% ML + 30% rule-based**, classifying content as **low** or **high** threat.
+
+---
+
+## How It Works
+
+This section explains **what happens** when a user uploads a document or pastes text, **which models** are involved, **how each model works**, and **why** we chose them.
+
+### The Big Picture: From Text to Threat Score
+
+```
+  User uploads a document or types text
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │  1. TEXT EXTRACTION    │   Extract readable text from PDF, DOCX,
+       │     (File Handler)     │   CSV, Excel, JSON, or plain text
+       └────────────────────────┘
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │  2. RULE-BASED SCAN   │   Search for known threat keywords
+       │     (Keyword Engine)   │   across 4 categories (30% of score)
+       └────────────────────────┘
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │  3. ML CLASSIFICATION  │   Feed text into trained ML model
+       │     (BERT or TF-IDF)   │   to predict threat level (70% of score)
+       └────────────────────────┘
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │  4. SCORE BLENDING     │   Combine: 70% ML + 30% Rule-based
+       │     (Hybrid Score)     │   → Final threat level: low or high
+       └────────────────────────┘
+                    │
+                    ▼
+         Dashboard shows results
+         with threat level, score,
+         keywords, and details
+```
+
+### Step 1: Text Extraction
+
+The system accepts **7 file formats**. Each file is parsed into plain text before analysis:
+
+| Format | How it's extracted |
+|--------|--------------------|
+| **TXT** | Read directly |
+| **PDF** | Each page is extracted using PyPDF2 |
+| **DOCX** | Paragraphs are extracted using python-docx |
+| **CSV** | All text columns are concatenated row-by-row |
+| **Excel** | Same as CSV, using openpyxl engine |
+| **JSON** | All string values are recursively extracted |
+
+For **structured data** files (CSV, Excel, JSON), the system additionally performs **data profiling** — statistics on rows, columns, missing values, numeric distributions, and top categorical values — alongside the threat analysis.
+
+### Step 2: Rule-Based Keyword Detection
+
+Before any ML model runs, the system scans the text for **known threat-related words** organised into four categories:
+
+| Category | Example Keywords | What it detects |
+|----------|-----------------|-----------------|
+| **Violence** | attack, bomb, explosive, weapon, kill, detonate | Direct references to physical violence or weapons |
+| **Extremism** | radical, extremist, militant, jihad, propaganda | Ideological extremism or radicalisation language |
+| **Planning** | plan, target, coordinate, operation, surveillance | Operational planning or reconnaissance activity |
+| **Financing** | funding, money laundering, cryptocurrency, hawala | Terrorism financing or illicit money flows |
+
+**How the rule-based score works:**
+- Count how many threat keywords appear and how often
+- Calculate **keyword density** (threat words ÷ total words)
+- Award bonus points for **category diversity** (threats across multiple categories are scored higher)
+- Convert to a 0–1 score and map to a threat level
+
+> **Why include rule-based?** ML models can occasionally misclassify edge cases. The keyword layer acts as a safety net — if text explicitly mentions "bomb" or "attack", the rule-based component ensures the threat score reflects that, even if the ML model is uncertain.
+
+### Step 3: Machine Learning Classification
+
+This is the core intelligence layer. The system supports **four different model families**, each with distinct strengths:
+
+---
+
+#### Model A: DistilBERT (Primary Model — Best Performance)
+
+| Property | Value |
+|----------|-------|
+| **Type** | Deep learning transformer (fine-tuned) |
+| **Base model** | `distilbert-base-uncased` from HuggingFace |
+| **Test F1-score** | **85.62%** |
+| **Test accuracy** | **85.61%** |
+| **ROC-AUC** | **92.63%** |
+| **Training** | 4 epochs, batch size 16, learning rate 2e-5 |
+
+**How it works (simplified):**
+1. The input text is split into small pieces called **tokens** (words or parts of words)
+2. Each token is converted into a numerical **embedding** — a list of 768 numbers that captures the token's meaning
+3. The tokens pass through **6 transformer layers**, where each token "pays attention" to every other token. This is the key innovation — the model understands that "bomb" after "cherry" is very different from "bomb" after "car"
+4. The final representation of the entire text is fed into a **classification head** (a small neural network) that outputs two probabilities: P(extremist) and P(non-extremist)
+5. The class with the higher probability becomes the prediction
+
+**What is a Transformer?**
+Think of it like a very sophisticated reader. A traditional model reads word by word, left to right. A transformer reads **all words simultaneously** and figures out which words are most relevant to each other. When it sees "The suspect planned to detonate the device at the embassy", it connects "suspect" ↔ "planned" ↔ "detonate" ↔ "device" ↔ "embassy" all at once, understanding the full context.
+
+**What is "Fine-tuning"?**
+DistilBERT was **pre-trained by Google** on billions of English sentences (Wikipedia + books). It already understands English grammar, word meanings, and context. We then **fine-tuned** it — we showed it our 2,776 extremism-labelled messages and adjusted its parameters so it specialises in distinguishing extremist from non-extremist text. This is like hiring an English literature expert and training them specifically for security analysis.
+
+**Why DistilBERT over full BERT?**
+- DistilBERT is a **compressed version** of BERT — 40% smaller and 60% faster, with only a 3% drop in accuracy
+- On our dataset, DistilBERT actually **outperformed** full BERT (85.6% vs 83.1% F1) — likely because the smaller model is less prone to overfitting on our relatively small dataset
+- Faster inference means quicker analysis for users
+
+---
+
+#### Model B: BERT-base (Alternative Deep Learning Model)
+
+| Property | Value |
+|----------|-------|
+| **Type** | Deep learning transformer (fine-tuned) |
+| **Base model** | `bert-base-uncased` from HuggingFace |
+| **Test F1-score** | **83.10%** |
+| **Test accuracy** | **83.09%** |
+| **ROC-AUC** | **91.51%** |
+| **Training** | 4 epochs, batch size 16, learning rate 2e-5 |
+
+BERT-base is the **full-size** version with 12 transformer layers (vs 6 in DistilBERT) and 110M parameters (vs 66M). It works identically to DistilBERT but with more capacity. On our dataset, it slightly underperformed DistilBERT, suggesting the extra capacity led to mild **overfitting** on our 2,776-sample dataset. However, with a larger dataset, BERT-base would likely surpass DistilBERT.
+
+---
+
+#### Model C: TF-IDF + Linear SVC (Fallback Model)
+
+| Property | Value |
+|----------|-------|
+| **Type** | Traditional ML (statistical) |
+| **Vectoriser** | TF-IDF (30,000 features, unigrams + bigrams) |
+| **Classifier** | Linear Support Vector Classifier (SVC) |
+| **Test F1-score** | **83.64%** |
+| **Test accuracy** | **83.63%** |
+| **CV F1 (5-fold)** | 82.52% ± 1.52% |
+
+**How it works (simplified):**
+1. **TF-IDF Vectorisation** — converts each text into a vector of 30,000 numbers. Each number represents how important a particular word (or pair of words) is to that text, compared to all other texts in the training set. "TF" (Term Frequency) measures how often a word appears in the text; "IDF" (Inverse Document Frequency) downweights common words like "the", "is", "and"
+2. **Linear SVC** — draws a straight line (actually a hyperplane in 30,000-dimensional space) that best separates "extremist" texts from "non-extremist" texts. New text is placed in this space, and whichever side of the line it falls on determines its classification
+
+**Why include this model?**
+- It runs on **any machine** without GPU or PyTorch — ideal as a fallback
+- Training takes **seconds** instead of minutes
+- It's interpretable: you can see exactly which words influenced the decision
+- Performance is surprisingly close to BERT (only 2% behind)
+
+**Other classifiers tested (all with TF-IDF):**
+
+| Classifier | CV F1 | Notes |
+|-----------|-------|-------|
+| Linear SVC | 82.52% | **Best traditional model** — selected as the fallback |
+| Logistic Regression | 82.20% | Very close to SVC, slightly simpler |
+| Random Forest (300 trees) | 82.06% | Good but slower, less suited for sparse text data |
+| SGD (Modified Huber) | 81.05% | Fastest training, good for very large datasets |
+
+---
+
+#### Model D: Sentence-BERT + Logistic Regression (Embedding Model)
+
+| Property | Value |
+|----------|-------|
+| **Type** | Neural embeddings + traditional classifier |
+| **Embedding model** | `all-MiniLM-L6-v2` (Sentence-BERT) |
+| **Classifier** | Logistic Regression |
+| **Saved as** | `sbert_logreg_model.joblib` |
+
+**How it works (simplified):**
+1. **Sentence-BERT** reads the entire text and produces a single vector of **384 numbers** that captures the overall meaning of the text. Unlike TF-IDF (which just counts words), this vector understands that "the suspect detonated an explosive" and "a bomb was set off by the attacker" have **similar meanings** even though they share almost no words
+2. **Logistic Regression** uses this 384-number representation to classify the text as extremist or non-extremist
+
+**Why this approach?**
+- It's a middle ground between TF-IDF (fast but shallow) and full BERT fine-tuning (powerful but resource-intensive)
+- The Sentence-BERT embeddings capture **semantic meaning**, not just word frequency
+- The classifier is very fast — the heavy lifting happens only once during encoding
+
+---
+
+### Step 4: Hybrid Score Blending
+
+The final threat score that users see is a **weighted combination** of ML and rule-based analysis:
+
+```
+final_score = 0.70 × ML_model_score + 0.30 × rule_based_score
+```
+
+| Component | Weight | Why |
+|-----------|--------|-----|
+| ML model (BERT or TF-IDF) | **70%** | The ML model captures subtle language patterns that keyword lists miss — it understands context, not just individual words |
+| Rule-based keywords | **30%** | The keyword layer ensures that explicit threat language is never overlooked, even if the ML model is uncertain |
+
+**Score → Threat Level Mapping:**
+
+| Score Range | Threat Level | Action |
+|-------------|-------------|--------|
+| 0.00 – 0.25 | **Low** | No immediate concern |
+| 0.26 – 0.50 | **Medium** | Worth monitoring |
+| 0.51 – 0.75 | **High** | Requires attention |
+| 0.76 – 1.00 | **Critical** | Immediate review needed |
+
+### Model Selection at Runtime
+
+The system automatically selects the best available model:
+
+```
+                  ┌─────────────────────────┐
+                  │  Is BERT model loaded?   │
+                  └─────────┬───────────────┘
+                       yes  │  no
+                       ▼    │   ▼
+              ┌──────────┐  │  ┌──────────────────────┐
+              │ Use BERT │  │  │ Is sklearn model      │
+              │ (85.6%)  │  │  │ loaded?               │
+              └──────────┘  │  └───────┬──────────────┘
+                            │     yes  │  no
+                            │     ▼    │   ▼
+                            │  ┌──────────┐  ┌───────────────┐
+                            │  │ Use SVC  │  │ Rule-based    │
+                            │  │ (83.6%)  │  │ only          │
+                            │  └──────────┘  └───────────────┘
+```
+
+### Why Multiple Models? A Summary
+
+| Model | Strength | Weakness | Best for |
+|-------|----------|----------|----------|
+| **DistilBERT** | Understands context and meaning; highest accuracy | Requires PyTorch (~500MB); slower inference | Production use with adequate hardware |
+| **TF-IDF + SVC** | Fast, lightweight, interpretable | Misses context ("car bomb" vs "cherry bomb") | Lightweight deployments, fallback |
+| **SBERT + LogReg** | Semantic understanding without fine-tuning | Depends on pre-trained embeddings | Quick experimentation, ensemble |
+| **Rule-based** | Transparent, no training needed, catches explicit threats | Cannot understand context or paraphrasing | Supplementary safety net |
 
 ---
 
@@ -43,7 +278,7 @@ The final threat score blends both methods: **70% ML + 30% rule-based**, providi
 |---------|-------------|
 | **Document Upload & Analysis** | Upload PDF, DOCX, TXT, CSV, Excel, JSON files for automated threat analysis |
 | **Text Analysis** | Paste and analyze free-form text directly via API or the web interface |
-| **ML-Powered Classification** | TF-IDF + SGD classifier trained on GTD — 91% accuracy (threat level), 88% accuracy (attack type) |
+| **ML-Powered Classification** | Multiple models: DistilBERT (85.6% F1), TF-IDF + Linear SVC (83.6% F1), SBERT + LogReg, SBERT + XGBoost |
 | **Data Profiling** | Structured data files (CSV/Excel/JSON) receive full statistical profiling alongside threat analysis |
 | **Interactive Dashboard** | Real-time charts, threat distribution, and analytics via Chart.js and Recharts |
 | **Live Monitoring** | Configurable web source monitoring with keyword-based alerting |
@@ -56,17 +291,22 @@ The final threat score blends both methods: **70% ML + 30% rule-based**, providi
 ## Architecture
 
 ```
-┌──────────────────┐     ┌────────────────────┐     ┌──────────────────────┐
-│  React Frontend  │────▶│   FastAPI Backend   │────▶│  ML / NLP Engine     │
-│  (TypeScript +   │     │   (REST API)        │     │  (scikit-learn +     │
-│   Tailwind CSS)  │     │                     │     │   TF-IDF pipeline)   │
-└──────────────────┘     └────────────────────┘     └──────────────────────┘
-         │                         │                          │
-         ▼                         ▼                          ▼
-┌──────────────────┐     ┌────────────────────┐     ┌──────────────────────┐
-│  Web Browser     │     │  SQLite / Postgres  │     │  Trained Models      │
-│  localhost:3000  │     │  (SQLAlchemy ORM)   │     │  (.joblib files)     │
-└──────────────────┘     └────────────────────┘     └──────────────────────┘
+┌──────────────────┐     ┌────────────────────┐     ┌──────────────────────────────┐
+│  React Frontend  │────▶│   FastAPI Backend   │────▶│  ML / NLP / DL Engine        │
+│  (TypeScript +   │     │   (REST API)        │     │                              │
+│   Tailwind CSS)  │     │                     │     │  ┌─ BERT (DistilBERT)  ◀── preferred
+└──────────────────┘     └────────────────────┘     │  ├─ TF-IDF + Linear SVC  ◀── fallback
+         │                         │                │  ├─ SBERT + LogReg / XGBoost
+         ▼                         ▼                │  └─ Rule-based keywords
+┌──────────────────┐     ┌────────────────────┐     └──────────────────────────────┘
+│  Web Browser     │     │  SQLite / Postgres  │                  │
+│  localhost:3000  │     │  (SQLAlchemy ORM)   │                  ▼
+└──────────────────┘     └────────────────────┘     ┌──────────────────────────────┐
+                                                    │  Trained Models              │
+                                                    │  bert_threat_model/          │
+                                                    │  threat_level_model.joblib   │
+                                                    │  sbert_logreg_model.joblib   │
+                                                    └──────────────────────────────┘
 ```
 
 ---
@@ -79,7 +319,9 @@ The final threat score blends both methods: **70% ML + 30% rule-based**, providi
 |-----------|-----------|
 | Web Framework | FastAPI 0.104 + Uvicorn |
 | ORM / Database | SQLAlchemy 2.0 (async) + aiosqlite (dev) / asyncpg (prod) |
-| Machine Learning | scikit-learn (TfidfVectorizer + SGDClassifier), joblib |
+| Machine Learning | scikit-learn (TF-IDF + SVC/SGD/LR/RF), joblib |
+| Deep Learning | PyTorch, HuggingFace Transformers (DistilBERT, BERT-base) |
+| NLP Embeddings | sentence-transformers (all-MiniLM-L6-v2), spaCy, XGBoost |
 | NLP | NLTK, langdetect, regex-based keyword matching |
 | Text Extraction | PyPDF2 (PDF), python-docx (DOCX), pandas + openpyxl (CSV/Excel), json (JSON) |
 | Authentication | JWT via python-jose, bcrypt password hashing |
@@ -138,7 +380,7 @@ dmfotdam/
 │   │   │   └── alert.py              # Threat alerts + monitoring sources
 │   │   ├── services/
 │   │   │   ├── text_analyzer.py       # Hybrid rule-based + ML threat analysis
-│   │   │   ├── ml_service.py          # Loads and runs trained scikit-learn models
+│   │   │   ├── ml_service.py          # Loads BERT (preferred) or sklearn models for inference
 │   │   │   ├── web_scraper.py         # URL content scraping
 │   │   │   └── live_monitor.py        # Background monitoring service
 │   │   └── utils/
@@ -147,14 +389,19 @@ dmfotdam/
 │   │       └── validators.py          # Input validation helpers
 │   ├── data/
 │   │   ├── datasets/
-│   │   │   ├── gtd.csv               # Global Terrorism Database (181,691 records)
-│   │   │   └── eda_output/            # 15 EDA visualisation PNGs
+│   │   │   ├── extremisim.csv         # Extremism dataset (2,776 labelled messages)
+│   │   │   └── eda_output/            # 20 EDA + model visualisation PNGs
 │   │   ├── models/
-│   │   │   ├── threat_level_model.joblib    # Trained threat level classifier
-│   │   │   └── attack_type_model.joblib     # Trained attack type classifier
+│   │   │   ├── bert_threat_model/            # Fine-tuned DistilBERT model + tokenizer
+│   │   │   ├── threat_level_model.joblib     # TF-IDF + Linear SVC (fallback)
+│   │   │   ├── sbert_logreg_model.joblib     # SBERT embeddings + Logistic Regression
+│   │   │   ├── training_summary.json         # TF-IDF training results
+│   │   │   └── bert_training_summary.json    # BERT training results
 │   │   └── uploads/                   # User-uploaded files
 │   ├── scripts/
-│   │   ├── train_models.py            # ML model training script
+│   │   ├── train_models.py            # TF-IDF + classical ML training (SVC, LR, RF, SGD)
+│   │   ├── train_bert_model.py        # BERT / DistilBERT fine-tuning
+│   │   ├── train_nlp_models.py        # SBERT + LogReg/XGBoost, spaCy training
 │   │   ├── run_eda.py                 # Exploratory data analysis + visualisations
 │   │   └── explore_data.py            # Dataset exploration utility
 │   └── tests/
@@ -209,16 +456,22 @@ dmfotdam/
 
 ### Training Data
 
-The **Global Terrorism Database (GTD)** from the University of Maryland — 181,691 terrorism incidents (1970–2017) with 135 variables. 115,562 records include text summaries used for training.
+The **Extremism Message Dataset** — 2,776 labelled messages classified as `EXTREMIST` or `NON_EXTREMIST`. Each row contains an `Original_Message` (text) and an `Extremism_Label`.
 
-### Models
+### Models Trained
 
-| Model | Task | Labels | Training Accuracy |
-|-------|------|--------|-------------------|
-| **Threat Level** | Classify severity | low, medium, high, critical | **91%** |
-| **Attack Type** | Classify attack category | 8 classes (Bombing, Armed Assault, Assassination, Hostage Taking, Infrastructure Attack, Unarmed Assault, Hijacking, Unknown) | **88%** |
+| Model | Type | Test F1 | Test Accuracy | ROC-AUC | Training Script |
+|-------|------|---------|---------------|---------|-----------------|
+| **DistilBERT** | Transformer (fine-tuned) | **85.62%** | 85.61% | 92.63% | `train_bert_model.py` |
+| **BERT-base** | Transformer (fine-tuned) | 83.10% | 83.09% | 91.51% | `train_bert_model.py` |
+| **TF-IDF + Linear SVC** | Traditional ML | 83.64% | 83.63% | — | `train_models.py` |
+| **TF-IDF + Logistic Regression** | Traditional ML | 82.20% (CV) | 82.21% (CV) | — | `train_models.py` |
+| **TF-IDF + Random Forest** | Traditional ML | 82.06% (CV) | 82.06% (CV) | — | `train_models.py` |
+| **TF-IDF + SGD** | Traditional ML | 81.05% (CV) | 81.05% (CV) | — | `train_models.py` |
+| **SBERT + Logistic Regression** | Embedding + ML | trained | saved | — | `train_nlp_models.py` |
+| **SBERT + XGBoost** | Embedding + ML | trained | saved | — | `train_nlp_models.py` |
 
-### Pipeline Architecture
+### Pipeline Architecture (TF-IDF Models)
 
 ```
 Input Text
@@ -234,9 +487,9 @@ Input Text
     │
     ▼
 ┌──────────────────────────────┐
-│  SGD Classifier              │
-│  - Modified Huber loss       │
+│  Linear SVC (best)           │
 │  - Balanced class weights    │
+│  - CalibratedClassifierCV    │
 │  - Probability estimates     │
 └──────────────────────────────┘
     │
@@ -244,20 +497,41 @@ Input Text
 Prediction + Probabilities
 ```
 
-### Label Derivation (Threat Level)
+### Pipeline Architecture (BERT Models)
 
-Threat level labels are derived from the total casualties (killed + wounded) per incident:
-
-| Casualties | Threat Level |
-|------------|-------------|
-| 0 | Low |
-| 1 – 5 | Medium |
-| 6 – 20 | High |
-| > 20 | Critical |
+```
+Input Text
+    │
+    ▼
+┌──────────────────────────────┐
+│  BERT Tokeniser              │
+│  - WordPiece tokenisation    │
+│  - Max length: 128 tokens    │
+│  - Padding + truncation      │
+└──────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────┐
+│  DistilBERT / BERT-base      │
+│  - 6 / 12 transformer layers │
+│  - Self-attention mechanism   │
+│  - 66M / 110M parameters     │
+└──────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────┐
+│  Classification Head          │
+│  - Linear layer (768 → 2)    │
+│  - Softmax probabilities     │
+└──────────────────────────────┘
+    │
+    ▼
+Prediction: low / high + probabilities
+```
 
 ### Hybrid Scoring
 
-The final threat score combines both methods:
+The final threat score combines ML and rule-based methods:
 
 ```
 threat_score = 0.7 × ML_score + 0.3 × rule_based_score
@@ -270,10 +544,29 @@ The rule-based component uses keyword density and category diversity across four
 ```bash
 cd backend
 source venv/bin/activate
+
+# Train traditional ML models (TF-IDF + classifiers) — runs in seconds
 python scripts/train_models.py
+
+# Train BERT models (DistilBERT + BERT-base) — ~15-30 min on CPU, ~5 min on GPU/MPS
+python scripts/train_bert_model.py
+
+# Train NLP embedding models (SBERT + LogReg/XGBoost, spaCy)
+python scripts/train_nlp_models.py
 ```
 
-This reads `data/datasets/gtd.csv`, trains both models, prints classification reports, and saves `.joblib` files to `data/models/`.
+### Visualisations Generated
+
+| # | Chart | Script |
+|---|-------|--------|
+| 13 | TF-IDF model comparison (4 classifiers) | `train_models.py` |
+| 14 | TF-IDF confusion matrix (best model) | `train_models.py` |
+| 15 | TF-IDF classification report heatmap | `train_models.py` |
+| 16 | BERT training loss curve | `train_bert_model.py` |
+| 17 | BERT confusion matrix | `train_bert_model.py` |
+| 18 | BERT classification report heatmap | `train_bert_model.py` |
+| 19 | BERT model comparison (DistilBERT vs BERT) | `train_bert_model.py` |
+| 20 | NLP model comparison (all models) | `train_nlp_models.py` |
 
 ---
 
@@ -311,6 +604,12 @@ pip install -r requirements.txt
 
 # Train ML models (required on first run)
 python scripts/train_models.py
+
+# Train BERT models (optional, improves accuracy — requires torch)
+python scripts/train_bert_model.py
+
+# Train NLP models (optional — requires sentence-transformers)
+python scripts/train_nlp_models.py
 
 # Start the server
 python main.py
@@ -430,6 +729,29 @@ Base URL: `http://localhost:8000/api/v1`
 | POST | `/monitoring/sources` | Add a monitoring source |
 | GET | `/monitoring/alerts` | List recent alerts |
 
+### Reddit Real-Time Monitoring
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/reddit/status` | API status and stored post count |
+| POST | `/reddit/scan` | Trigger manual scan (subreddits, limit, threshold) |
+| POST | `/reddit/search` | Search Reddit with threat analysis |
+| GET | `/reddit/posts` | List flagged posts (filter by threat_level, subreddit, days) |
+| GET | `/reddit/posts/{id}` | Get detailed post analysis |
+| PATCH | `/reddit/posts/{id}/review` | Mark a post as reviewed |
+| GET | `/reddit/trends` | Daily trend data (post volume, avg/max threat scores) |
+| GET | `/reddit/subreddits` | Per-subreddit statistics |
+
+**Setup:** Create a Reddit app at https://www.reddit.com/prefs/apps (script type) and set environment variables:
+
+```bash
+REDDIT_CLIENT_ID=your_client_id
+REDDIT_CLIENT_SECRET=your_client_secret
+REDDIT_USER_AGENT="DMFOTDAM/1.0"
+```
+
+The system automatically scans monitored subreddits every 24 hours (configurable via `REDDIT_SCAN_INTERVAL_HOURS`). Each post is analysed by the ML pipeline (BERT/TF-IDF) and flagged if the threat score exceeds the threshold. Results are viewable on the **Trends** and **Extremism Content** frontend pages.
+
 All endpoints except `/auth/register` and `/auth/login` require a Bearer token in the `Authorization` header.
 
 ### Example: Analyse Text
@@ -511,34 +833,40 @@ The system uses **SQLite** in development and **PostgreSQL** in production, with
 
 ## Dataset & EDA
 
-### Global Terrorism Database (GTD)
+### Extremism Message Dataset
 
-- **Source:** University of Maryland, via Kaggle
-- **Records:** 181,691 incidents (1970–2017)
-- **Variables:** 135 columns including event summaries, attack types, weapon types, target types, casualties, geographic data
-- **Text field:** `summary` column (115,562 non-null) — used for ML training
+- **Source:** Extremism-labelled text messages
+- **Records:** 2,776 messages (after cleaning)
+- **Columns:** `Original_Message` (text), `Extremism_Label` (`EXTREMIST` / `NON_EXTREMIST`)
+- **Label mapping:** `EXTREMIST` → high, `NON_EXTREMIST` → low
+- **Train/test split:** 80% / 20% (stratified, 2,220 train / 556 test)
 
 ### Exploratory Data Analysis
 
-15 visualisations generated by `scripts/run_eda.py` and saved to `data/datasets/eda_output/`:
+20 visualisations generated by training scripts and saved to `data/datasets/eda_output/`:
 
-| # | Visualisation |
-|---|---------------|
-| 01 | Yearly trend of attacks |
-| 02 | Top affected countries |
-| 03 | Attack type distribution |
-| 04 | Target type distribution |
-| 05 | Weapon type distribution |
-| 06 | Regional analysis |
-| 07 | Casualty analysis |
-| 08 | Most active terror groups |
-| 09 | Attack success rates |
-| 10 | Suicide attack analysis |
-| 11 | Feature correlation heatmap |
-| 12 | Missing values analysis |
-| 13 | Geographic scatter map |
-| 14 | Seasonal patterns |
-| 15 | Feature distributions |
+| # | Visualisation | Source |
+|---|---------------|--------|
+| 01 | Class distribution | `run_eda.py` |
+| 02 | Message length distribution | `run_eda.py` |
+| 03 | Top n-grams | `run_eda.py` |
+| 04 | Correlation heatmap | `run_eda.py` |
+| 05 | Average word length | `run_eda.py` |
+| 06 | Vocabulary richness | `run_eda.py` |
+| 07 | KDE density plot | `run_eda.py` |
+| 08 | Feature comparison | `run_eda.py` |
+| 09 | Outlier analysis | `run_eda.py` |
+| 10 | Punctuation analysis | `run_eda.py` |
+| 11 | Term frequency | `run_eda.py` |
+| 12 | Data quality | `run_eda.py` |
+| 13 | TF-IDF model comparison (4 classifiers) | `train_models.py` |
+| 14 | TF-IDF confusion matrix | `train_models.py` |
+| 15 | TF-IDF classification report heatmap | `train_models.py` |
+| 16 | BERT training loss curve | `train_bert_model.py` |
+| 17 | BERT confusion matrix | `train_bert_model.py` |
+| 18 | BERT classification report heatmap | `train_bert_model.py` |
+| 19 | BERT model comparison (DistilBERT vs BERT) | `train_bert_model.py` |
+| 20 | NLP model comparison (all models) | `train_nlp_models.py` |
 
 Full reports: [Dataset Research & Selection](docs/dataset-research-and-selection.md) · [Data Profiling & EDA Report](docs/data-profiling-eda-report.md)
 

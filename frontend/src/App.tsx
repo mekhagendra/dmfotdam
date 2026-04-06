@@ -9,6 +9,8 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Monitoring from './pages/Monitoring';
+import Trends from './pages/Trends';
+import ExtremismContent from './pages/ExtremismContent';
 import Reports from './pages/Reports';
 import Login from './pages/Login';
 
@@ -59,6 +61,26 @@ const AppRoutes: React.FC = () => {
           <ProtectedRoute>
             <Layout title="Live Monitoring">
               <Monitoring />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trends"
+        element={
+          <ProtectedRoute>
+            <Layout title="Reddit Threat Trends">
+              <Trends />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/extremism-content"
+        element={
+          <ProtectedRoute>
+            <Layout title="Extremism Content">
+              <ExtremismContent />
             </Layout>
           </ProtectedRoute>
         }

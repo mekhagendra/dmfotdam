@@ -35,6 +35,7 @@ async def create_db_and_tables():
     """Create database tables on startup"""
     async with engine.begin() as conn:
         from app.models import user, document, analysis, alert  # noqa: F401
+        from app.models import reddit_post  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
 
 

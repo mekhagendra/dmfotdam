@@ -11,6 +11,8 @@ const navLinks = [
   { path: '/', label: 'Dashboard' },
   { path: '/upload', label: 'Upload' },
   { path: '/monitoring', label: 'Monitoring' },
+  { path: '/trends', label: 'Trends' },
+  { path: '/extremism-content', label: 'Extremism Content' },
   { path: '/reports', label: 'Reports' },
 ];
 

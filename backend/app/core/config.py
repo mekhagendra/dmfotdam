@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # External APIs (configure as needed)
     NEWS_API_KEY: str = ""
     TWITTER_BEARER_TOKEN: str = ""
+
+    # Reddit API
+    REDDIT_CLIENT_ID: str = ""
+    REDDIT_CLIENT_SECRET: str = ""
+    REDDIT_USER_AGENT: str = "DMFOTDAM/1.0 (Threat Monitoring Research Bot)"
+    REDDIT_SCAN_INTERVAL_HOURS: int = 24
+    REDDIT_DEFAULT_SUBREDDITS: str = "worldnews,news,geopolitics,terrorism,extremism"
     
     # Redis for caching and background tasks
     REDIS_URL: str = "redis://localhost:6379/0"

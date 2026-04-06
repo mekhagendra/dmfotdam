@@ -36,8 +36,18 @@ async def lifespan(app: FastAPI):
     ml = MLService()
     ml.load_models()
 
+    # Start Reddit monitoring scheduler (runs daily in background)
+    from app.core.config import get_settings
+    settings = get_settings()
+    if settings.REDDIT_CLIENT_ID and settings.REDDIT_CLIENT_SECRET:
+        from app.services.reddit_scheduler import start_scheduler
+        start_scheduler(interval_hours=settings.REDDIT_SCAN_INTERVAL_HOURS)
+
     yield
-    # Shutdown - cleanup tasks if needed
+
+    # Shutdown
+    from app.services.reddit_scheduler import stop_scheduler
+    stop_scheduler()
 
 
 async def seed_admin_user():

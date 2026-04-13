@@ -308,3 +308,96 @@ async def get_subreddit_stats(
         })
 
     return stats
+
+
+# ── Daily report endpoints ───────────────────────────────────────────
+
+@router.get("/reports")
+async def list_daily_reports(
+    user_id: int = Depends(get_current_user_id),
+):
+    """List all available daily extremism reports (CSV files)."""
+    import os
+    report_dir = os.path.join("data", "datasets", "eda_output", "daily_reports")
+    if not os.path.isdir(report_dir):
+        return {"reports": []}
+
+    files = sorted(
+        [f for f in os.listdir(report_dir) if f.endswith(".csv")],
+        reverse=True,
+    )
+    return {
+        "reports": [
+            {
+                "date": f.replace(".csv", ""),
+                "filename": f,
+                "size_bytes": os.path.getsize(os.path.join(report_dir, f)),
+            }
+            for f in files
+        ]
+    }
+
+
+@router.get("/reports/{date}")
+async def get_daily_report(
+    date: str,
+    user_id: int = Depends(get_current_user_id),
+    format: str = Query("json", pattern="^(json|csv)$"),
+):
+    """
+    Retrieve a daily extremism report.
+
+    - **date**: YYYY-MM-DD
+    - **format**: `json` (default) or `csv` for raw file download
+    """
+    import os
+    import csv as csv_module
+    from fastapi.responses import FileResponse
+
+    report_dir = os.path.join("data", "datasets", "eda_output", "daily_reports")
+    report_path = os.path.join(report_dir, f"{date}.csv")
+
+    if not os.path.isfile(report_path):
+        raise HTTPException(status_code=404, detail=f"No report found for {date}")
+
+    if format == "csv":
+        return FileResponse(
+            path=report_path,
+            media_type="text/csv",
+            filename=f"extremism_report_{date}.csv",
+        )
+
+    # Return as JSON
+    rows = []
+    with open(report_path, newline="", encoding="utf-8") as f:
+        reader = csv_module.DictReader(f)
+        for row in reader:
+            rows.append(row)
+
+    return {
+        "date": date,
+        "total_records": len(rows),
+        "posts": rows,
+    }
+
+
+@router.post("/reports/generate")
+async def trigger_daily_report(
+    user_id: int = Depends(get_current_user_id),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD, defaults to today"),
+    top_n: int = Query(100, ge=1, le=500),
+):
+    """Manually trigger daily report generation for a given date."""
+    from app.services.reddit_scheduler import generate_daily_report
+
+    report_date = None
+    if date:
+        try:
+            report_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
+
+    path = await generate_daily_report(date=report_date, top_n=top_n)
+    if not path:
+        return {"status": "no_data", "message": "No posts found for the given date"}
+    return {"status": "generated", "report_path": path}

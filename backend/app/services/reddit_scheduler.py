@@ -24,7 +24,7 @@ _scheduler_task: Optional[asyncio.Task] = None
 
 async def run_daily_reddit_scan(
     subreddits: Optional[list[str]] = None,
-    limit: int = 50,
+    limit: int = 100,
     threat_threshold: float = 0.3,
 ) -> dict:
     """
@@ -202,6 +202,76 @@ async def compute_daily_trends(days: int = 30) -> list[dict]:
     return trends
 
 
+async def generate_daily_report(date: Optional[datetime] = None, top_n: int = 100) -> str:
+    """
+    Generate a CSV daily report of the top-N extremist posts for a given date.
+
+    Saves to: data/datasets/eda_output/daily_reports/YYYY-MM-DD.csv
+    Returns the path to the saved file.
+    """
+    import csv
+    import os
+    from app.core.database import async_session
+    from app.models.reddit_post import RedditPost
+    from sqlalchemy import select
+
+    report_date = date or datetime.now(timezone.utc)
+    date_str = report_date.strftime("%Y-%m-%d")
+
+    # Query top-N flagged posts for that day ordered by threat score
+    day_start = report_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(RedditPost)
+            .where(RedditPost.scanned_at >= day_start)
+            .where(RedditPost.scanned_at < day_end)
+            .order_by(RedditPost.threat_score.desc())
+            .limit(top_n)
+        )
+        posts = result.scalars().all()
+
+    if not posts:
+        logger.info(f"No posts found for {date_str}, skipping daily report")
+        return ""
+
+    report_dir = os.path.join("data", "datasets", "eda_output", "daily_reports")
+    os.makedirs(report_dir, exist_ok=True)
+    report_path = os.path.join(report_dir, f"{date_str}.csv")
+
+    fieldnames = [
+        "rank", "reddit_id", "subreddit", "title", "author", "url",
+        "score", "num_comments", "threat_score", "threat_level",
+        "keyword_hits", "categories_detected", "posted_at", "scanned_at",
+    ]
+
+    with open(report_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for rank, post in enumerate(posts, start=1):
+            details = post.analysis_details or {}
+            writer.writerow({
+                "rank": rank,
+                "reddit_id": post.reddit_id,
+                "subreddit": post.subreddit,
+                "title": post.title,
+                "author": post.author,
+                "url": post.url,
+                "score": post.score,
+                "num_comments": post.num_comments,
+                "threat_score": round(post.threat_score, 4),
+                "threat_level": post.threat_level,
+                "keyword_hits": "|".join(details.get("keyword_hits", {}).keys()) if isinstance(details.get("keyword_hits"), dict) else "",
+                "categories_detected": "|".join(details.get("categories_detected", [])),
+                "posted_at": post.posted_at.isoformat() if post.posted_at else "",
+                "scanned_at": post.scanned_at.isoformat() if post.scanned_at else "",
+            })
+
+    logger.info(f"Daily report saved: {report_path} ({len(posts)} posts)")
+    return report_path
+
+
 async def _scheduler_loop(interval_hours: int = 24):
     """Background loop that runs Reddit scan at set intervals."""
     logger.info(f"Reddit scheduler started (interval: {interval_hours}h)")
@@ -211,6 +281,10 @@ async def _scheduler_loop(interval_hours: int = 24):
             logger.info("Running scheduled Reddit scan...")
             result = await run_daily_reddit_scan()
             logger.info("Scheduled scan result", **{k: v for k, v in result.items() if k != "scan_summary"})
+            # Generate the daily report after every scan
+            report_path = await generate_daily_report(top_n=100)
+            if report_path:
+                logger.info(f"Daily report ready: {report_path}")
         except Exception as e:
             logger.error("Scheduled Reddit scan failed", error=str(e))
 

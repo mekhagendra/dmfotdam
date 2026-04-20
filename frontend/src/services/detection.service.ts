@@ -1,7 +1,7 @@
 import api from './api';
 
 export interface AnalysisResult {
-  id: number;
+  id: string;
   analysis_type: string;
   status: string;
   threat_score: number | null;
@@ -11,12 +11,14 @@ export interface AnalysisResult {
   keywords: string[] | null;
   sentiment: string | null;
   language: string | null;
+  source_url?: string | null;
+  explanation?: Record<string, unknown> | null;
   created_at: string;
   completed_at: string | null;
 }
 
 export interface DocumentInfo {
-  id: number;
+  id: string;
   filename: string;
   original_filename: string;
   file_type: string;
@@ -27,7 +29,7 @@ export interface DocumentInfo {
 
 export interface UploadResponse {
   document: DocumentInfo;
-  analysis_id: number;
+  analysis_id: string;
   message: string;
 }
 
@@ -38,10 +40,19 @@ export interface DashboardMetrics {
   high_alerts: number;
   active_sources: number;
   avg_threat_score: number;
+  // New fields
+  medium_alerts: number;
+  low_alerts: number;
+  category_breakdown: Record<string, number>;
+  threat_trend_24h: number;
+  analyses_today: number;
+  source_breakdown: Record<string, number>;
+  active_model: string;
+  model_f1: number;
 }
 
 export interface AlertInfo {
-  id: number;
+  id: string;
   title: string;
   description: string | null;
   threat_level: string;
@@ -54,7 +65,7 @@ export interface AlertInfo {
 }
 
 export interface MonitoringSource {
-  id: number;
+  id: string;
   name: string;
   url: string;
   source_type: string;
@@ -85,7 +96,7 @@ export const detectionService = {
     return response.data;
   },
 
-  async getAnalysisResult(id: number): Promise<AnalysisResult> {
+  async getAnalysisResult(id: string): Promise<AnalysisResult> {
     const response = await api.get<AnalysisResult>(`/detection/results/${id}`);
     return response.data;
   },
@@ -121,15 +132,25 @@ export const detectionService = {
     return response.data;
   },
 
-  async deleteSource(id: number): Promise<void> {
+  async deleteSource(id: string): Promise<void> {
     await api.delete(`/monitoring/sources/${id}`);
   },
 
-  async markAlertRead(id: number): Promise<void> {
+  async markAlertRead(id: string): Promise<void> {
     await api.patch(`/monitoring/alerts/${id}/read`);
   },
 
-  async resolveAlert(id: number): Promise<void> {
+  async resolveAlert(id: string): Promise<void> {
     await api.patch(`/monitoring/alerts/${id}/resolve`);
+  },
+
+  async runScanNow(): Promise<Record<string, unknown>> {
+    const response = await api.post('/monitoring/scan/run');
+    return response.data;
+  },
+
+  async getUnreadAlertCount(): Promise<number> {
+    const response = await api.get<AlertInfo[]>('/monitoring/alerts');
+    return response.data.filter(a => !a.is_read && !a.is_resolved).length;
   },
 };

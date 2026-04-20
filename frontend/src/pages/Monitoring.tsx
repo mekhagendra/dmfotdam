@@ -40,9 +40,9 @@ const Monitoring: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Monitoring Sources */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-panel rounded-lg border border-edge p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold">Monitoring Sources</h2>
+          <h2 className="text-xl font-semibold text-slate-100">Monitoring Sources</h2>
           <button
             onClick={() => setShowForm(!showForm)}
             className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium"
@@ -52,30 +52,30 @@ const Monitoring: React.FC = () => {
         </div>
 
         {showForm && (
-          <form onSubmit={handleSubmit(onSubmit)} className="mb-6 p-4 bg-gray-50 rounded-lg space-y-3">
+          <form onSubmit={handleSubmit(onSubmit)} className="mb-6 p-4 bg-panel-alt rounded-lg space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Name</label>
                 <input
                   {...register('name', { required: 'Name is required' })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
                 {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
+                <label className="block text-sm font-medium text-slate-300 mb-1">URL</label>
                 <input
                   {...register('url', { required: 'URL is required' })}
                   type="url"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
                 {errors.url && <p className="text-red-500 text-xs mt-1">{errors.url.message}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Type</label>
                 <select
                   {...register('source_type')}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="website">Website</option>
                   <option value="rss">RSS Feed</option>
@@ -83,24 +83,24 @@ const Monitoring: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-300 mb-1">
                   Check Interval (seconds)
                 </label>
                 <input
                   {...register('check_interval', { valueAsNumber: true, min: 60, max: 86400 })}
                   type="number"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-300 mb-1">
                 Keywords (comma-separated)
               </label>
               <input
                 {...register('keywords')}
                 placeholder="e.g., security, threat, extremism"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
             <button
@@ -114,28 +114,28 @@ const Monitoring: React.FC = () => {
         )}
 
         {sourcesLoading ? (
-          <p className="text-gray-500">Loading sources...</p>
+          <p className="text-slate-500">Loading sources...</p>
         ) : sources && sources.length > 0 ? (
           <div className="space-y-3">
             {sources.map((source) => (
               <div
                 key={source.id}
-                className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
+                className="flex items-center justify-between p-4 border border-edge rounded-lg hover:bg-panel-hover"
               >
                 <div>
-                  <h4 className="font-medium">{source.name}</h4>
-                  <p className="text-sm text-gray-500 truncate max-w-md">{source.url}</p>
+                  <h4 className="font-medium text-slate-200">{source.name}</h4>
+                  <p className="text-sm text-slate-500 truncate max-w-md">{source.url}</p>
                   <div className="flex gap-2 mt-1">
-                    <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">{source.source_type}</span>
+                    <span className="text-xs bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded">{source.source_type}</span>
                     <span
                       className={`text-xs px-2 py-0.5 rounded ${
-                        source.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        source.is_active ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-500'
                       }`}
                     >
                       {source.is_active ? 'Active' : 'Inactive'}
                     </span>
                     {source.keywords && source.keywords.length > 0 && (
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-slate-500">
                         {source.keywords.length} keywords
                       </span>
                     )}
@@ -151,13 +151,13 @@ const Monitoring: React.FC = () => {
             ))}
           </div>
         ) : (
-          <p className="text-gray-500">No monitoring sources configured.</p>
+          <p className="text-slate-500">No monitoring sources configured.</p>
         )}
       </div>
 
       {/* Alerts */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4">Alerts</h2>
+      <div className="bg-panel rounded-lg border border-edge p-6">
+        <h2 className="text-xl font-semibold mb-4 text-slate-100">Alerts</h2>
         <AlertList alerts={alerts ?? []} loading={alertsLoading} />
       </div>
     </div>

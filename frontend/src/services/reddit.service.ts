@@ -1,7 +1,7 @@
 import api from './api';
 
 export interface RedditPost {
-  id: number;
+  id: string;
   reddit_id: string;
   subreddit: string;
   title: string;
@@ -107,12 +107,12 @@ export const redditService = {
     return response.data;
   },
 
-  async getPostDetail(id: number): Promise<RedditPost> {
+  async getPostDetail(id: string): Promise<RedditPost> {
     const response = await api.get<RedditPost>(`/reddit/posts/${id}`);
     return response.data;
   },
 
-  async markPostReviewed(id: number): Promise<void> {
+  async markPostReviewed(id: string): Promise<void> {
     await api.patch(`/reddit/posts/${id}/review`);
   },
 

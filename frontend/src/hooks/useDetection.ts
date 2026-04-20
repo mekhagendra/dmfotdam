@@ -79,10 +79,16 @@ export function useCreateSource() {
   );
 }
 
+export function useUnreadAlertCount() {
+  return useQuery('unreadAlertCount', detectionService.getUnreadAlertCount, {
+    refetchInterval: 15000,
+  });
+}
+
 export function useDeleteSource() {
   const queryClient = useQueryClient();
   return useMutation(
-    (id: number) => detectionService.deleteSource(id),
+    (id: string) => detectionService.deleteSource(id),
     {
       onSuccess: () => {
         toast.success('Source removed');

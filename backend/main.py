@@ -1,100 +1,89 @@
 """
-Main application entry point for the Terrorism Detection and Monitoring System
+FastAPI entrypoint for the Terrorism Detection & Monitoring System.
+
+Startup flow:
+  1. setup_logging()
+  2. connect_to_mongo()
+  3. ensure_default_sources()        – seed Reddit + RSS feeds if empty
+  4. start the APScheduler job that polls every source on COLLECTOR_INTERVAL_SECONDS
+
+Shutdown flow:
+  * stop the scheduler
+  * close the Mongo client
 """
 
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer
-from contextlib import asynccontextmanager
-import os
-import uvicorn
+from __future__ import annotations
 
-# Ensure working directory is the backend folder
+import os
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+# Ensure CWD is the backend folder regardless of how the server was launched.
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-from app.core.config import get_settings
-from app.core.database import create_db_and_tables
 from app.api import api_router
-from app.core.logging import setup_logging
+from app.core.config import get_settings
+from app.core.database import close_mongo_connection, connect_to_mongo
+from app.core.logging import get_logger, setup_logging
+from app.core.scheduler import (
+    register_job,
+    shutdown_scheduler,
+    start_scheduler,
+)
+from app.services.collector_manager import (
+    ensure_default_sources,
+    run_all_sources,
+)
 
-# Setup logging
 setup_logging()
-
-# Security
-security = HTTPBearer()
+logger = get_logger(__name__)
+settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan management"""
-    # Startup
-    await create_db_and_tables()
-    await seed_admin_user()
-
-    # Pre-load ML models so first request isn't slow
-    from app.services.ml_service import MLService
-    ml = MLService()
-    ml.load_models()
-
-    # Start Reddit monitoring scheduler (runs daily in background)
-    from app.core.config import get_settings
-    settings = get_settings()
-    if settings.REDDIT_CLIENT_ID and settings.REDDIT_CLIENT_SECRET:
-        from app.services.reddit_scheduler import start_scheduler
-        start_scheduler(interval_hours=settings.REDDIT_SCAN_INTERVAL_HOURS)
+    # ---- startup
+    logger.info("app.starting", environment=settings.ENVIRONMENT)
+    await connect_to_mongo()
+    await ensure_default_sources()
+    
+    # Pre-load ML model in background thread so it's ready before first request
+    import asyncio
+    from app.services.ml_service import get_pipeline
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, get_pipeline)
+    
+    start_scheduler()
+    register_job(
+        run_all_sources,
+        interval_seconds=settings.COLLECTOR_INTERVAL_SECONDS,
+        job_id="collector.run_all_sources",
+        run_immediately=True,
+    )
+    logger.info("app.started")
 
     yield
 
-    # Shutdown
-    from app.services.reddit_scheduler import stop_scheduler
-    stop_scheduler()
-
-
-async def seed_admin_user():
-    """Ensure the default admin user exists with correct credentials."""
-    from app.core.database import async_session
-    from app.core.security import get_password_hash
-    from app.models.user import User
-    from sqlalchemy import select
-
-    async with async_session() as session:
-        result = await session.execute(select(User).where(User.username == "admin"))
-        user = result.scalar_one_or_none()
-
-        if user is None:
-            user = User(
-                username="admin",
-                email="admin@tdm.com",
-                hashed_password=get_password_hash("Admin@123"),
-                full_name="System Administrator",
-                role="admin",
-                is_active=True,
-            )
-            session.add(user)
-        else:
-            # Update existing admin user to match expected credentials
-            user.email = "admin@tdm.com"
-            user.hashed_password = get_password_hash("Admin@123")
-            user.role = "admin"
-            user.is_active = True
-
-        await session.commit()
+    # ---- shutdown
+    logger.info("app.shutting_down")
+    shutdown_scheduler()
+    await close_mongo_connection()
+    logger.info("app.stopped")
 
 
 def create_application() -> FastAPI:
-    """Create and configure FastAPI application"""
-    settings = get_settings()
-    
     app = FastAPI(
-        title="Terrorism Detection & Monitoring System",
-        description="Web data mining application for terrorism detection and monitoring",
-        version="1.0.0",
+        title=settings.APP_NAME,
+        description="Real-time web data mining for online terrorism detection & monitoring.",
+        version="2.0.0",
         docs_url="/api/docs" if settings.ENVIRONMENT == "development" else None,
         redoc_url="/api/redoc" if settings.ENVIRONMENT == "development" else None,
-        lifespan=lifespan
+        lifespan=lifespan,
     )
 
-    # CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_HOSTS,
@@ -103,27 +92,23 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include API router
-    app.include_router(api_router, prefix="/api/v1")
-
+    app.include_router(api_router, prefix=settings.API_V1_PREFIX)
     return app
 
 
 app = create_application()
 
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "tdm-backend"}
+@app.get("/health", tags=["health"])
+async def health() -> dict:
+    return {"status": "healthy", "service": "tdm-backend", "version": app.version}
 
 
 if __name__ == "__main__":
-    settings = get_settings()
     uvicorn.run(
         "main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=settings.ENVIRONMENT == "development",
-        log_level="info"
+        reload=(settings.ENVIRONMENT == "development"),
+        log_level="info",
     )

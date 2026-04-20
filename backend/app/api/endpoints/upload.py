@@ -1,181 +1,154 @@
 """
-File upload endpoints
+File-upload endpoints — accept documents, classify them, persist results.
 """
+
+from __future__ import annotations
 
 import os
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from bson import ObjectId
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.core.database import get_db
+from app.api.dependencies import get_current_user
 from app.core.config import get_settings
-from app.core.security import get_current_user_id
-from app.models.document import Document
-from app.models.analysis import Analysis
-from app.utils.file_handler import save_upload_file, validate_file_type, DATA_FILE_EXTENSIONS
+from app.core.database import analyses_col, documents_col
+from app.models.document import DocumentPublic
 from app.services.text_analyzer import TextAnalyzer
+from app.utils.file_handler import save_upload_file
 
-router = APIRouter()
-settings = get_settings()
+router = APIRouter(prefix="/upload", tags=["upload"])
+_settings = get_settings()
 
-
-class DocumentResponse(BaseModel):
-    id: int
-    filename: str
-    original_filename: str
-    file_type: str
-    file_size: int | None
-    status: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
+ALLOWED_EXT = {".pdf", ".docx", ".txt", ".csv", ".xlsx", ".xls", ".json"}
 
 
 class UploadResponse(BaseModel):
-    document: DocumentResponse
-    analysis_id: int
+    document: DocumentPublic
+    analysis_id: str
     message: str
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv", ".xlsx", ".xls", ".json"}
+def _doc_public(doc: dict) -> DocumentPublic:
+    return DocumentPublic(
+        id=str(doc["_id"]),
+        filename=doc["filename"],
+        original_filename=doc["original_filename"],
+        file_type=doc["file_type"],
+        file_size=doc.get("file_size"),
+        status=doc.get("status", "completed"),
+        created_at=doc["created_at"],
+    )
 
 
 @router.post("/document", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Upload a document for threat analysis"""
+    current=Depends(get_current_user),
+) -> UploadResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
 
-    # Validate file type
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in ALLOWED_EXTENSIONS:
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXT:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+            detail=f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_EXT))}",
         )
 
-    validate_file_type(file.filename)
-
-    # Read file content
     content = await file.read()
-    if len(content) > settings.MAX_FILE_SIZE:
+    if len(content) > _settings.MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Max size: {settings.MAX_FILE_SIZE // (1024*1024)}MB",
+            detail=f"File exceeds {_settings.MAX_FILE_SIZE // (1024*1024)} MB",
         )
 
-    # Save file
-    safe_filename = f"{uuid.uuid4().hex}{file_ext}"
-    file_path = save_upload_file(content, safe_filename, settings.UPLOAD_DIR)
+    safe_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = save_upload_file(content, safe_name, _settings.UPLOAD_DIR)
 
-    # Create document record
-    document = Document(
-        filename=safe_filename,
-        original_filename=file.filename,
-        file_type=file_ext.lstrip("."),
-        file_size=len(content),
-        file_path=file_path,
-        status="processing",
-        uploaded_by=user_id,
-    )
-    db.add(document)
-    await db.flush()
-    await db.refresh(document)
+    now = datetime.now(timezone.utc)
+    doc = {
+        "filename": safe_name,
+        "original_filename": file.filename,
+        "file_type": ext.lstrip("."),
+        "file_size": len(content),
+        "file_path": file_path,
+        "status": "processing",
+        "uploaded_by": str(current["_id"]),
+        "created_at": now,
+    }
+    doc_ins = await documents_col().insert_one(doc)
+    doc["_id"] = doc_ins.inserted_id
 
-    # Create analysis record
-    analysis = Analysis(
-        document_id=document.id,
-        user_id=user_id,
-        analysis_type="document",
-        status="processing",
-    )
-    db.add(analysis)
-    await db.flush()
-    await db.refresh(analysis)
-
-    # Run analysis
+    analyzer = TextAnalyzer()
     try:
-        analyzer = TextAnalyzer()
-        file_type_str = file_ext.lstrip(".")
+        result = await analyzer.analyze_file(file_path, doc["file_type"])
+        status_ = "completed"
+    except Exception as exc:
+        result = {
+            "threat_score": 0.0,
+            "threat_level": "low",
+            "summary": f"Analysis failed: {exc}",
+            "details": {"error": str(exc)},
+            "keywords": [],
+            "sentiment": None,
+            "language": "unknown",
+        }
+        status_ = "failed"
 
-        if file_ext in DATA_FILE_EXTENSIONS:
-            # Structured data file: run data profiling + threat analysis
-            result = analyzer.analyze_data(file_path, file_type_str)
-            threat_result = result["threat_analysis"]
-            analysis.threat_score = threat_result["threat_score"]
-            analysis.threat_level = threat_result["threat_level"]
-            analysis.summary = threat_result["summary"]
-            analysis.details = {
-                "data_profile": result["data_profile"],
-                **threat_result.get("details", {}),
-            }
-            analysis.keywords = threat_result["keywords"]
-            analysis.sentiment = threat_result["sentiment"]
-            analysis.language = threat_result.get("language", "en")
-            analysis.analysis_type = "data_profiling"
-        else:
-            # Text-based file: standard threat analysis
-            text = analyzer.extract_text_from_file(file_path, file_type_str)
-            result = analyzer.analyze(text)
-            analysis.threat_score = result["threat_score"]
-            analysis.threat_level = result["threat_level"]
-            analysis.summary = result["summary"]
-            analysis.details = result["details"]
-            analysis.keywords = result["keywords"]
-            analysis.sentiment = result["sentiment"]
-            analysis.language = result.get("language", "en")
+    await documents_col().update_one({"_id": doc["_id"]}, {"$set": {"status": status_}})
+    doc["status"] = status_
 
-        analysis.status = "completed"
-        analysis.completed_at = datetime.now(timezone.utc)
-        document.status = "completed"
-    except Exception:
-        analysis.status = "failed"
-        document.status = "failed"
+    analysis_doc = {
+        "document_id": str(doc["_id"]),
+        "user_id": str(current["_id"]),
+        "analysis_type": "document",
+        "status": status_,
+        "threat_score": result["threat_score"],
+        "threat_level": result["threat_level"],
+        "summary": result["summary"],
+        "details": result["details"],
+        "keywords": result["keywords"],
+        "sentiment": result.get("sentiment"),
+        "language": result.get("language"),
+        "created_at": now,
+        "completed_at": datetime.now(timezone.utc),
+    }
+    ana_ins = await analyses_col().insert_one(analysis_doc)
 
     return UploadResponse(
-        document=document,
-        analysis_id=analysis.id,
-        message="Document uploaded and analysis started",
+        document=_doc_public(doc),
+        analysis_id=str(ana_ins.inserted_id),
+        message="Document uploaded and analyzed",
     )
 
 
-@router.get("/history", response_model=list[DocumentResponse])
-async def get_upload_history(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get upload history for the current user"""
-    result = await db.execute(
-        select(Document)
-        .where(Document.uploaded_by == user_id)
-        .order_by(desc(Document.created_at))
+@router.get("/history", response_model=list[DocumentPublic])
+async def upload_history(current=Depends(get_current_user)) -> list[DocumentPublic]:
+    cursor = (
+        documents_col()
+        .find({"uploaded_by": str(current["_id"])})
+        .sort("created_at", -1)
         .limit(50)
     )
-    return result.scalars().all()
+    return [_doc_public(doc) async for doc in cursor]
 
 
 @router.get("/status/{document_id}")
-async def get_upload_status(
-    document_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Check the status of an uploaded document"""
-    result = await db.execute(
-        select(Document).where(
-            Document.id == document_id, Document.uploaded_by == user_id
-        )
+async def upload_status(document_id: str, current=Depends(get_current_user)) -> dict:
+    try:
+        oid = ObjectId(document_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+    doc = await documents_col().find_one(
+        {"_id": oid, "uploaded_by": str(current["_id"])}
     )
-    doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    return {"id": doc.id, "status": doc.status, "filename": doc.original_filename}
+    return {
+        "id": str(doc["_id"]),
+        "status": doc.get("status"),
+        "filename": doc.get("original_filename"),
+    }

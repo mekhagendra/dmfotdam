@@ -1,403 +1,367 @@
 """
-Reddit monitoring API endpoints.
+Reddit-specific endpoints on top of the unified collector architecture.
 
-Provides:
-  - Manual scan trigger
-  - Reddit search
-  - Flagged extremism content listing with pagination
-  - Daily trend data
-  - Post detail and review actions
+Historically this router wired SQLAlchemy `RedditPost` models. That layer
+is now replaced by the generic `collected_items` collection in MongoDB
+plus the `/monitoring/*` endpoints. This module exposes a few thin
+conveniences: trigger a scan of arbitrary subreddits ad-hoc and query the
+stored collected items filtered to `source_type == "reddit"`.
 """
 
-from datetime import datetime, timezone, timedelta
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func, cast, Date
-from pydantic import BaseModel, Field
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from app.core.database import get_db
-from app.core.security import get_current_user_id
-from app.models.reddit_post import RedditPost
+from bson import ObjectId
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
-router = APIRouter()
+from app.api.dependencies import get_current_user
+from app.core.database import collected_items_col, sources_col
+from app.services import reddit_collector
+from app.services.collector_manager import run_one_source
+
+router = APIRouter(prefix="/reddit", tags=["reddit"])
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SUBREDDITS = [
+    "news", "worldnews", "CredibleDefense", "geopolitics",
+    "IntelligenceNews", "terrorism", "SecurityAnalysis",
+    "PoliticalDiscussion", "ConflictNews",
+]
 
 
-# ── Request / Response schemas ───────────────────────────────────────
+def _serialise_item(d: dict) -> dict:
+    """Turn a collected_items Mongo doc into a JSON-safe dict."""
+    cls = d.get("classification") or {}
+    return {
+        "id": str(d["_id"]),
+        "reddit_id": d.get("external_id", ""),
+        "subreddit": d.get("source", ""),
+        "title": d.get("title", ""),
+        "text": d.get("text", ""),
+        "author": d.get("author", ""),
+        "url": d.get("url", ""),
+        "score": d.get("score", 0),
+        "num_comments": d.get("num_comments", 0),
+        "threat_score": d.get("threat_score", 0.0),
+        "threat_level": d.get("threat_level", "low"),
+        "analysis_details": cls,
+        "posted_at": _iso(d.get("posted_at")),
+        "scanned_at": _iso(d.get("collected_at")),
+        "is_reviewed": d.get("is_reviewed", False),
+    }
+
+
+def _iso(v) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.isoformat()
+    return str(v)
+
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
 
 class ScanRequest(BaseModel):
-    subreddits: Optional[list[str]] = None
-    limit: int = Field(50, ge=1, le=200)
-    threat_threshold: float = Field(0.3, ge=0.0, le=1.0)
+    subreddits: list[str] = Field(default_factory=list)
+    limit: int = Field(50, ge=1, le=100)
+    threat_threshold: float | None = None
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., min_length=2, max_length=200)
-    subreddits: Optional[list[str]] = None
+    query: str
+    subreddits: list[str] = Field(default_factory=list)
     limit: int = Field(25, ge=1, le=100)
-    time_filter: str = Field("day", pattern="^(hour|day|week|month|year|all)$")
+    time_filter: str | None = None
 
 
-class RedditPostResponse(BaseModel):
-    id: int
-    reddit_id: str
-    subreddit: str
-    title: str
-    text: str
-    author: str
-    url: str
-    score: int
-    num_comments: int
-    threat_score: float
-    threat_level: str
-    analysis_details: dict | None
-    posted_at: datetime | None
-    scanned_at: datetime | None
-    is_reviewed: bool
-
-    class Config:
-        from_attributes = True
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
-class TrendDataPoint(BaseModel):
-    date: str
-    total_posts: int
-    avg_threat_score: float
-    max_threat_score: float
-    high_threat_count: int
+@router.post("/scan")
+async def scan_subreddits(
+    req: ScanRequest, current=Depends(get_current_user)
+) -> dict:
+    """Trigger an immediate scan of one or more subreddits."""
+    subs = req.subreddits or _DEFAULT_SUBREDDITS
 
+    results = []
+    total_scanned = 0
+    total_flagged = 0
+    new_stored = 0
+    for sub in subs:
+        existing = await sources_col().find_one(
+            {"source_type": "reddit", "url": sub}
+        )
+        if existing is None:
+            doc = {
+                "name": f"Reddit r/{sub}",
+                "url": sub,
+                "source_type": "reddit",
+                "keywords": [],
+                "is_active": True,
+                "check_interval": 300,
+                "last_checked": None,
+                "created_at": datetime.now(timezone.utc),
+            }
+            ins = await sources_col().insert_one(doc)
+            doc["_id"] = ins.inserted_id
+            existing = doc
+        r = await run_one_source(existing)
+        results.append(r)
+        total_scanned += r.get("fetched", 0)
+        new_stored += r.get("new", 0)
 
-class ScanResultResponse(BaseModel):
-    status: str
-    scan_time: str | None = None
-    total_scanned: int = 0
-    total_flagged: int = 0
-    new_posts_stored: int = 0
-    new_alerts_generated: int = 0
-    reason: str | None = None
-
-
-class RedditStatusResponse(BaseModel):
-    available: bool
-    message: str
-    default_subreddits: list[str]
-    total_stored_posts: int
-    last_scan_time: str | None
-
-
-# ── Endpoints ────────────────────────────────────────────────────────
-
-@router.get("/status", response_model=RedditStatusResponse)
-async def reddit_status(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Check Reddit API status and monitoring statistics."""
-    from app.services.reddit_service import RedditService
-
-    reddit = RedditService()
-    available = reddit.is_available
-
-    total = (await db.execute(
-        select(func.count()).select_from(RedditPost)
-    )).scalar() or 0
-
-    last_post = (await db.execute(
-        select(RedditPost.scanned_at)
-        .order_by(desc(RedditPost.scanned_at))
-        .limit(1)
-    )).scalar_one_or_none()
-
-    from app.services.reddit_service import DEFAULT_SUBREDDITS
-
-    return RedditStatusResponse(
-        available=available,
-        message="Reddit API connected" if available else "Reddit API not configured. Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env",
-        default_subreddits=DEFAULT_SUBREDDITS,
-        total_stored_posts=total,
-        last_scan_time=last_post.isoformat() if last_post else None,
+    # Count items above threshold that were just collected
+    threshold = req.threat_threshold or 0.5
+    total_flagged = await collected_items_col().count_documents(
+        {"source_type": "reddit", "threat_score": {"$gte": threshold}}
     )
 
+    return {
+        "status": "completed",
+        "scan_time": datetime.now(timezone.utc).isoformat(),
+        "total_scanned": total_scanned,
+        "total_flagged": total_flagged,
+        "new_posts_stored": new_stored,
+        "new_alerts_generated": 0,
+        "reason": None,
+    }
 
-@router.post("/scan", response_model=ScanResultResponse)
-async def trigger_scan(
-    request: ScanRequest,
-    user_id: int = Depends(get_current_user_id),
-):
-    """Manually trigger a Reddit scan. Fetches posts, analyzes them, stores flagged content."""
-    from app.services.reddit_scheduler import run_daily_reddit_scan
 
-    result = await run_daily_reddit_scan(
-        subreddits=request.subreddits,
-        limit=request.limit,
-        threat_threshold=request.threat_threshold,
+@router.get("/posts")
+async def list_reddit_posts(
+    threat_level: Optional[str] = Query(None),
+    subreddit: Optional[str] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current=Depends(get_current_user),
+) -> list[dict]:
+    """List collected reddit items with optional filters."""
+    filt: dict = {"source_type": "reddit"}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    filt["collected_at"] = {"$gte": cutoff}
+    if threat_level:
+        filt["threat_level"] = threat_level
+    if subreddit:
+        filt["source"] = subreddit
+
+    cursor = (
+        collected_items_col()
+        .find(filt)
+        .sort("collected_at", -1)
+        .skip(offset)
+        .limit(limit)
     )
-    return ScanResultResponse(**result)
+    return [_serialise_item(d) async for d in cursor]
+
+
+@router.get("/posts/{post_id}")
+async def get_reddit_post(post_id: str, current=Depends(get_current_user)) -> dict:
+    """Fetch a single reddit item by its Mongo _id."""
+    if not ObjectId.is_valid(post_id):
+        raise HTTPException(status_code=404, detail="Post not found")
+    doc = await collected_items_col().find_one(
+        {"_id": ObjectId(post_id), "source_type": "reddit"}
+    )
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return _serialise_item(doc)
+
+
+@router.patch("/posts/{post_id}/review")
+async def mark_post_reviewed(post_id: str, current=Depends(get_current_user)) -> dict:
+    """Mark a reddit item as reviewed."""
+    if not ObjectId.is_valid(post_id):
+        raise HTTPException(status_code=404, detail="Post not found")
+    result = await collected_items_col().update_one(
+        {"_id": ObjectId(post_id), "source_type": "reddit"},
+        {"$set": {"is_reviewed": True}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"status": "ok"}
+
+
+@router.get("/trends")
+async def reddit_trends(
+    days: int = Query(30, ge=1, le=365),
+    current=Depends(get_current_user),
+) -> list[dict]:
+    """Daily aggregated trend data for reddit items."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    pipeline = [
+        {"$match": {"source_type": "reddit", "collected_at": {"$gte": cutoff}}},
+        {
+            "$group": {
+                "_id": {
+                    "$dateToString": {"format": "%Y-%m-%d", "date": "$collected_at"}
+                },
+                "total_posts": {"$sum": 1},
+                "avg_threat_score": {"$avg": "$threat_score"},
+                "max_threat_score": {"$max": "$threat_score"},
+                "high_threat_count": {
+                    "$sum": {
+                        "$cond": [{"$gte": ["$threat_score", 0.5]}, 1, 0]
+                    }
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+    results = []
+    async for doc in collected_items_col().aggregate(pipeline):
+        results.append(
+            {
+                "date": doc["_id"],
+                "total_posts": doc["total_posts"],
+                "avg_threat_score": round(doc["avg_threat_score"], 4),
+                "max_threat_score": round(doc["max_threat_score"], 4),
+                "high_threat_count": doc["high_threat_count"],
+            }
+        )
+    return results
+
+
+@router.get("/subreddits")
+async def subreddit_stats(
+    days: int = Query(30, ge=1, le=365),
+    current=Depends(get_current_user),
+) -> list[dict]:
+    """Per-subreddit aggregated stats."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    pipeline = [
+        {"$match": {"source_type": "reddit", "collected_at": {"$gte": cutoff}}},
+        {
+            "$group": {
+                "_id": "$source",
+                "total_posts": {"$sum": 1},
+                "avg_threat_score": {"$avg": "$threat_score"},
+                "max_threat_score": {"$max": "$threat_score"},
+                "high_threat_count": {
+                    "$sum": {
+                        "$cond": [{"$gte": ["$threat_score", 0.5]}, 1, 0]
+                    }
+                },
+            }
+        },
+        {"$sort": {"total_posts": -1}},
+    ]
+    results = []
+    async for doc in collected_items_col().aggregate(pipeline):
+        results.append(
+            {
+                "subreddit": doc["_id"] or "unknown",
+                "total_posts": doc["total_posts"],
+                "avg_threat_score": round(doc["avg_threat_score"], 4),
+                "max_threat_score": round(doc["max_threat_score"], 4),
+                "high_threat_count": doc["high_threat_count"],
+            }
+        )
+    return results
 
 
 @router.post("/search")
 async def search_reddit(
-    request: SearchRequest,
-    user_id: int = Depends(get_current_user_id),
-):
-    """Search Reddit for specific terms and analyze results."""
-    import asyncio
-    from app.services.reddit_service import RedditService
+    req: SearchRequest, current=Depends(get_current_user)
+) -> dict:
+    """Search collected reddit items by text query."""
+    filt: dict = {"source_type": "reddit"}
+    if req.subreddits:
+        filt["source"] = {"$in": req.subreddits}
 
-    reddit = RedditService()
-    if not reddit.is_available:
-        raise HTTPException(status_code=503, detail="Reddit API not configured")
+    # Text search via regex (case-insensitive)
+    import re
+    pattern = re.escape(req.query)
+    text_match = {"$regex": pattern, "$options": "i"}
+    filt["$or"] = [{"title": text_match}, {"text": text_match}]
 
-    loop = asyncio.get_event_loop()
-    posts = await loop.run_in_executor(
-        None,
-        lambda: reddit.search_reddit(
-            query=request.query,
-            subreddits=request.subreddits,
-            limit=request.limit,
-            time_filter=request.time_filter,
-        ),
+    cursor = (
+        collected_items_col()
+        .find(filt)
+        .sort("threat_score", -1)
+        .limit(req.limit)
     )
-
-    analyzed = await loop.run_in_executor(None, lambda: reddit.analyze_posts(posts))
-
-    return {
-        "query": request.query,
-        "total_results": len(analyzed),
-        "posts": analyzed,
-    }
-
-
-@router.get("/posts", response_model=list[RedditPostResponse])
-async def list_flagged_posts(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-    threat_level: Optional[str] = Query(None, pattern="^(low|high)$"),
-    subreddit: Optional[str] = Query(None),
-    days: int = Query(30, ge=1, le=365),
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-):
-    """List stored flagged Reddit posts with optional filters."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    query = select(RedditPost).where(RedditPost.scanned_at >= cutoff)
-
-    if threat_level:
-        query = query.where(RedditPost.threat_level == threat_level)
-    if subreddit:
-        query = query.where(RedditPost.subreddit == subreddit)
-
-    query = query.order_by(desc(RedditPost.threat_score)).offset(offset).limit(limit)
-
-    result = await db.execute(query)
-    return result.scalars().all()
-
-
-@router.get("/posts/{post_id}", response_model=RedditPostResponse)
-async def get_post_detail(
-    post_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get detailed information about a specific flagged Reddit post."""
-    result = await db.execute(
-        select(RedditPost).where(RedditPost.id == post_id)
-    )
-    post = result.scalar_one_or_none()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return post
-
-
-@router.patch("/posts/{post_id}/review")
-async def mark_post_reviewed(
-    post_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Mark a flagged Reddit post as reviewed."""
-    result = await db.execute(
-        select(RedditPost).where(RedditPost.id == post_id)
-    )
-    post = result.scalar_one_or_none()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-
-    post.is_reviewed = True
-    post.reviewed_at = datetime.now(timezone.utc)
-    return {"message": "Post marked as reviewed"}
-
-
-@router.get("/trends", response_model=list[TrendDataPoint])
-async def get_trends(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-    days: int = Query(30, ge=1, le=365),
-):
-    """Get daily trend data — post counts, threat scores, flagged content over time."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    result = await db.execute(
-        select(RedditPost)
-        .where(RedditPost.scanned_at >= cutoff)
-        .order_by(RedditPost.scanned_at)
-    )
-    all_posts = result.scalars().all()
-
-    if not all_posts:
-        return []
-
-    # Group by date
-    from collections import defaultdict
-    daily = defaultdict(list)
-    for post in all_posts:
-        day = post.scanned_at.strftime("%Y-%m-%d") if post.scanned_at else "unknown"
-        daily[day].append(post)
-
-    trends = []
-    for day in sorted(daily.keys()):
-        posts = daily[day]
-        scores = [p.threat_score for p in posts if p.threat_score is not None]
-        trends.append(TrendDataPoint(
-            date=day,
-            total_posts=len(posts),
-            avg_threat_score=round(sum(scores) / len(scores), 4) if scores else 0,
-            max_threat_score=round(max(scores), 4) if scores else 0,
-            high_threat_count=len([p for p in posts if p.threat_level == "high"]),
-        ))
-
-    return trends
-
-
-@router.get("/subreddits")
-async def get_subreddit_stats(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-    days: int = Query(30, ge=1, le=365),
-):
-    """Get per-subreddit statistics from stored posts."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    result = await db.execute(
-        select(RedditPost).where(RedditPost.scanned_at >= cutoff)
-    )
-    all_posts = result.scalars().all()
-
-    from collections import defaultdict
-    subreddit_data = defaultdict(lambda: {"posts": 0, "scores": [], "high_count": 0})
-
-    for post in all_posts:
-        sub = post.subreddit
-        subreddit_data[sub]["posts"] += 1
-        if post.threat_score is not None:
-            subreddit_data[sub]["scores"].append(post.threat_score)
-        if post.threat_level == "high":
-            subreddit_data[sub]["high_count"] += 1
-
-    stats = []
-    for sub, data in sorted(subreddit_data.items(), key=lambda x: x[1]["posts"], reverse=True):
-        scores = data["scores"]
-        stats.append({
-            "subreddit": sub,
-            "total_posts": data["posts"],
-            "avg_threat_score": round(sum(scores) / len(scores), 4) if scores else 0,
-            "max_threat_score": round(max(scores), 4) if scores else 0,
-            "high_threat_count": data["high_count"],
-        })
-
-    return stats
-
-
-# ── Daily report endpoints ───────────────────────────────────────────
-
-@router.get("/reports")
-async def list_daily_reports(
-    user_id: int = Depends(get_current_user_id),
-):
-    """List all available daily extremism reports (CSV files)."""
-    import os
-    report_dir = os.path.join("data", "datasets", "eda_output", "daily_reports")
-    if not os.path.isdir(report_dir):
-        return {"reports": []}
-
-    files = sorted(
-        [f for f in os.listdir(report_dir) if f.endswith(".csv")],
-        reverse=True,
-    )
-    return {
-        "reports": [
+    posts = []
+    async for d in cursor:
+        posts.append(
             {
-                "date": f.replace(".csv", ""),
-                "filename": f,
-                "size_bytes": os.path.getsize(os.path.join(report_dir, f)),
+                "reddit_id": d.get("external_id", ""),
+                "subreddit": d.get("source", ""),
+                "title": d.get("title", ""),
+                "text": d.get("text", ""),
+                "author": d.get("author", ""),
+                "url": d.get("url", ""),
+                "score": d.get("score", 0),
+                "num_comments": d.get("num_comments", 0),
+                "threat_score": d.get("threat_score", 0.0),
+                "threat_level": d.get("threat_level", "low"),
+                "created_utc": _iso(d.get("posted_at") or d.get("collected_at")),
+                "analysis": d.get("classification"),
             }
-            for f in files
-        ]
-    }
-
-
-@router.get("/reports/{date}")
-async def get_daily_report(
-    date: str,
-    user_id: int = Depends(get_current_user_id),
-    format: str = Query("json", pattern="^(json|csv)$"),
-):
-    """
-    Retrieve a daily extremism report.
-
-    - **date**: YYYY-MM-DD
-    - **format**: `json` (default) or `csv` for raw file download
-    """
-    import os
-    import csv as csv_module
-    from fastapi.responses import FileResponse
-
-    report_dir = os.path.join("data", "datasets", "eda_output", "daily_reports")
-    report_path = os.path.join(report_dir, f"{date}.csv")
-
-    if not os.path.isfile(report_path):
-        raise HTTPException(status_code=404, detail=f"No report found for {date}")
-
-    if format == "csv":
-        return FileResponse(
-            path=report_path,
-            media_type="text/csv",
-            filename=f"extremism_report_{date}.csv",
         )
+    return {"query": req.query, "total_results": len(posts), "posts": posts}
 
-    # Return as JSON
-    rows = []
-    with open(report_path, newline="", encoding="utf-8") as f:
-        reader = csv_module.DictReader(f)
-        for row in reader:
-            rows.append(row)
+
+@router.get("/flagged")
+async def list_flagged_reddit_items(
+    limit: int = Query(50, ge=1, le=200),
+    min_score: float = Query(0.5, ge=0.0, le=1.0),
+    current=Depends(get_current_user),
+) -> list[dict]:
+    """List reddit items that scored above a threshold."""
+    cursor = (
+        collected_items_col()
+        .find({"source_type": "reddit", "threat_score": {"$gte": min_score}})
+        .sort("threat_score", -1)
+        .limit(limit)
+    )
+    out: list[dict] = []
+    async for d in cursor:
+        out.append(
+            {
+                "external_id": d.get("external_id"),
+                "title": d.get("title"),
+                "url": d.get("url"),
+                "source": d.get("source"),
+                "author": d.get("author"),
+                "threat_score": d.get("threat_score"),
+                "threat_level": d.get("threat_level"),
+                "collected_at": d.get("collected_at"),
+            }
+        )
+    return out
+
+
+@router.get("/status")
+async def reddit_status(current=Depends(get_current_user)) -> dict:
+    """Report whether Reddit credentials are set up and stats."""
+    client = reddit_collector._reddit_client()
+    total = await collected_items_col().count_documents({"source_type": "reddit"})
+
+    # Find the most recent last_checked across all reddit sources
+    latest_source = await sources_col().find_one(
+        {"source_type": "reddit", "last_checked": {"$ne": None}},
+        sort=[("last_checked", -1)],
+        projection={"last_checked": 1},
+    )
+    last_scan = _iso(latest_source["last_checked"]) if latest_source else None
 
     return {
-        "date": date,
-        "total_records": len(rows),
-        "posts": rows,
+        "available": client is not None,
+        "message": "Reddit API connected" if client else "Reddit credentials not configured",
+        "default_subreddits": _DEFAULT_SUBREDDITS,
+        "total_stored_posts": total,
+        "last_scan_time": last_scan,
     }
-
-
-@router.post("/reports/generate")
-async def trigger_daily_report(
-    user_id: int = Depends(get_current_user_id),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD, defaults to today"),
-    top_n: int = Query(100, ge=1, le=500),
-):
-    """Manually trigger daily report generation for a given date."""
-    from app.services.reddit_scheduler import generate_daily_report
-
-    report_date = None
-    if date:
-        try:
-            report_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
-
-    path = await generate_daily_report(date=report_date, top_n=top_n)
-    if not path:
-        return {"status": "no_data", "message": "No posts found for the given date"}
-    return {"status": "generated", "report_path": path}

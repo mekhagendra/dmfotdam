@@ -1,11 +1,26 @@
 /** @type {import('tailwindcss').Config} */
+const defaultTheme = require('tailwindcss/defaultTheme');
+
 module.exports = {
   content: [
     "./src/**/*.{js,jsx,ts,tsx}",
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Space Grotesk', ...defaultTheme.fontFamily.sans],
+        mono: ['JetBrains Mono', ...defaultTheme.fontFamily.mono],
+      },
       colors: {
+        panel: {
+          DEFAULT: '#0B1120',
+          alt: '#0F1729',
+          hover: '#131D33',
+        },
+        edge: {
+          DEFAULT: '#1A2744',
+          light: '#243552',
+        },
         primary: {
           50: '#eff6ff',
           100: '#dbeafe',

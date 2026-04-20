@@ -295,16 +295,14 @@ The system automatically selects the best available model:
 │  React Frontend  │────▶│   FastAPI Backend   │────▶│  ML / NLP / DL Engine        │
 │  (TypeScript +   │     │   (REST API)        │     │                              │
 │   Tailwind CSS)  │     │                     │     │  ┌─ BERT (DistilBERT)  ◀── preferred
-└──────────────────┘     └────────────────────┘     │  ├─ TF-IDF + Linear SVC  ◀── fallback
-         │                         │                │  ├─ SBERT + LogReg / XGBoost
-         ▼                         ▼                │  └─ Rule-based keywords
-┌──────────────────┐     ┌────────────────────┐     └──────────────────────────────┘
-│  Web Browser     │     │  SQLite / Postgres  │                  │
-│  localhost:3000  │     │  (SQLAlchemy ORM)   │                  ▼
-└──────────────────┘     └────────────────────┘     ┌──────────────────────────────┐
-                                                    │  Trained Models              │
+└──────────────────┘     └────────────────────┘     │  ├─ SBERT + LogReg / XGBoost
+         │                         │                │  └─ Rule-based keywords
+         ▼                         ▼                └──────────────────────────────┘
+┌──────────────────┐     ┌────────────────────┐                  │
+│  Web Browser     │     │  SQLite / Postgres  │                  ▼
+│  localhost:3000  │     │  (SQLAlchemy ORM)   │     ┌──────────────────────────────┐
+└──────────────────┘     └────────────────────┘     │  Trained Models              │
                                                     │  bert_threat_model/          │
-                                                    │  threat_level_model.joblib   │
                                                     │  sbert_logreg_model.joblib   │
                                                     └──────────────────────────────┘
 ```
@@ -393,17 +391,14 @@ dmfotdam/
 │   │   │   └── eda_output/            # 20 EDA + model visualisation PNGs
 │   │   ├── models/
 │   │   │   ├── bert_threat_model/            # Fine-tuned DistilBERT model + tokenizer
-│   │   │   ├── threat_level_model.joblib     # TF-IDF + Linear SVC (fallback)
 │   │   │   ├── sbert_logreg_model.joblib     # SBERT embeddings + Logistic Regression
-│   │   │   ├── training_summary.json         # TF-IDF training results
 │   │   │   └── bert_training_summary.json    # BERT training results
 │   │   └── uploads/                   # User-uploaded files
 │   ├── scripts/
 │   │   ├── train_models.py            # TF-IDF + classical ML training (SVC, LR, RF, SGD)
 │   │   ├── train_bert_model.py        # BERT / DistilBERT fine-tuning
 │   │   ├── train_nlp_models.py        # SBERT + LogReg/XGBoost, spaCy training
-│   │   ├── run_eda.py                 # Exploratory data analysis + visualisations
-│   │   └── explore_data.py            # Dataset exploration utility
+│   │   └── run_eda.py                 # Exploratory data analysis + visualisations
 │   └── tests/
 │       ├── test_text_analyzer.py
 │       └── test_utils.py

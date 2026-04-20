@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { redditService, RedditPost } from '../services/reddit.service';
+import { redditService } from '../services/reddit.service';
 import { toast } from 'react-toastify';
 
 export function useRedditStatus() {
@@ -32,7 +32,7 @@ export function useFlaggedPosts(params?: {
   });
 }
 
-export function useRedditPostDetail(id: number | null) {
+export function useRedditPostDetail(id: string | null) {
   return useQuery(['redditPost', id], () => redditService.getPostDetail(id!), {
     enabled: id !== null,
   });
@@ -73,7 +73,7 @@ export function useSearchReddit() {
 export function useMarkReviewed() {
   const queryClient = useQueryClient();
   return useMutation(
-    (id: number) => redditService.markPostReviewed(id),
+    (id: string) => redditService.markPostReviewed(id),
     {
       onSuccess: () => {
         toast.success('Post marked as reviewed');

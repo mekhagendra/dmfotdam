@@ -7,6 +7,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, fullName?: string) => Promise<void>;
+  googleLogin: (credential: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -21,9 +22,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const profile = await authService.getProfile();
         setUser(profile);
-      } catch {
-        authService.logout();
-        setUser(null);
+      } catch (error: any) {
+        // Only logout on actual authentication failure (401)
+        // Don't logout on network errors or other temporary issues
+        if (error?.response?.status === 401) {
+          authService.logout();
+          setUser(null);
+        }
+        // For other errors, keep the token and try again later
       }
     }
     setIsLoading(false);
@@ -43,6 +49,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await authService.register({ username, email, password, full_name: fullName });
   };
 
+  const googleLogin = async (credential: string) => {
+    const res = await authService.googleLogin(credential);
+    setUser(res.user);
+  };
+
   const logout = () => {
     authService.logout();
     setUser(null);
@@ -56,6 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         register,
+        googleLogin,
         logout,
       }}
     >

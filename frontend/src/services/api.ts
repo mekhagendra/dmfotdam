@@ -22,9 +22,18 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Only logout on 401 if:
+    // 1. There's actually a token (user was logged in)
+    // 2. It's from the /auth/me endpoint (token validation)
     if (error.response?.status === 401) {
-      localStorage.removeItem('access_token');
-      window.location.href = '/login';
+      const token = localStorage.getItem('access_token');
+      const isAuthEndpoint = error.config?.url?.includes('/auth/me');
+      
+      // Only force logout if this is an auth validation failure
+      if (token && isAuthEndpoint) {
+        localStorage.removeItem('access_token');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

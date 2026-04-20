@@ -1,15 +1,13 @@
-"""
-API module initialization
-"""
+"""Aggregate API router — mounted under /api/v1 in main.py."""
 
 from fastapi import APIRouter
-from .endpoints import detection, monitoring, upload, auth, reddit
+
+from app.api.endpoints import auth, detection, monitoring, reddit, upload, ws
 
 api_router = APIRouter()
-
-# Include all endpoint routers
-api_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
-api_router.include_router(upload.router, prefix="/upload", tags=["file-upload"])
-api_router.include_router(detection.router, prefix="/detection", tags=["threat-detection"])
-api_router.include_router(monitoring.router, prefix="/monitoring", tags=["live-monitoring"])
-api_router.include_router(reddit.router, prefix="/reddit", tags=["reddit-monitoring"])
+api_router.include_router(auth.router)
+api_router.include_router(upload.router)
+api_router.include_router(detection.router)
+api_router.include_router(monitoring.router)
+api_router.include_router(reddit.router)
+api_router.include_router(ws.router)

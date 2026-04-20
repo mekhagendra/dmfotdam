@@ -1,218 +1,357 @@
 """
-Live monitoring endpoints
+Live-monitoring endpoints — CRUD for sources, alerts, dashboard metrics,
+one-off scan trigger, and a WebSocket that streams new alerts in real time.
 """
 
-from datetime import datetime, timezone
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
-from pydantic import BaseModel, Field, HttpUrl
+import asyncio
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict
 
-from app.core.database import get_db
-from app.core.security import get_current_user_id
-from app.models.alert import Alert, MonitoringSource
+from bson import ObjectId
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from pydantic import BaseModel
 
-router = APIRouter()
+from app.api.dependencies import get_current_user
+from app.core.database import (
+    alerts_col,
+    analyses_col,
+    sources_col,
+)
+from app.core.security import decode_access_token
+from app.models.alert import AlertPublic
+from app.models.source import SourceCreate, SourcePublic
+from app.services.collector_manager import broadcaster, run_all_sources
+import app.services.ml_service as _ml
 
-
-class SourceCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    url: HttpUrl
-    source_type: str = Field(..., pattern="^(website|rss|social_media)$")
-    keywords: list[str] = []
-    check_interval: int = Field(300, ge=60, le=86400)
-
-
-class SourceResponse(BaseModel):
-    id: int
-    name: str
-    url: str
-    source_type: str
-    keywords: list | None
-    is_active: bool
-    check_interval: int
-    last_checked: datetime | None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
+router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
 
-class AlertResponse(BaseModel):
-    id: int
-    title: str
-    description: str | None
-    threat_level: str
-    threat_score: float
-    source: str | None
-    source_type: str | None
-    is_read: bool
-    is_resolved: bool
-    created_at: datetime
+# ---------- dto helpers ----------
 
-    class Config:
-        from_attributes = True
+
+def _src_public(doc: dict) -> SourcePublic:
+    return SourcePublic(
+        id=str(doc["_id"]),
+        name=doc["name"],
+        url=doc["url"],
+        source_type=doc["source_type"],
+        keywords=doc.get("keywords") or [],
+        is_active=doc.get("is_active", True),
+        check_interval=doc.get("check_interval", 300),
+        last_checked=doc.get("last_checked"),
+        created_at=doc["created_at"],
+    )
+
+
+def _alert_public(doc: dict) -> AlertPublic:
+    return AlertPublic(
+        id=str(doc["_id"]),
+        title=doc["title"],
+        description=doc.get("description"),
+        threat_level=doc["threat_level"],
+        threat_score=float(doc.get("threat_score", 0.0)),
+        source=doc.get("source"),
+        source_type=doc.get("source_type"),
+        is_read=doc.get("is_read", False),
+        is_resolved=doc.get("is_resolved", False),
+        created_at=doc["created_at"],
+    )
 
 
 class DashboardMetrics(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     total_analyses: int
     total_alerts: int
     critical_alerts: int
     high_alerts: int
     active_sources: int
     avg_threat_score: float
+    # New fields
+    medium_alerts: int
+    low_alerts: int
+    category_breakdown: Dict[str, int]
+    threat_trend_24h: float
+    analyses_today: int
+    source_breakdown: Dict[str, int]
+    active_model: str
+    model_f1: float
 
 
-@router.post("/sources", response_model=SourceResponse, status_code=201)
+# ---------- sources ----------
+
+
+@router.post("/sources", response_model=SourcePublic, status_code=201)
 async def create_source(
-    request: SourceCreateRequest,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Configure a new monitoring source"""
-    source = MonitoringSource(
-        name=request.name,
-        url=str(request.url),
-        source_type=request.source_type,
-        keywords=request.keywords,
-        check_interval=request.check_interval,
-    )
-    db.add(source)
-    await db.flush()
-    await db.refresh(source)
-    return source
+    payload: SourceCreate, current=Depends(get_current_user)
+) -> SourcePublic:
+    if await sources_col().find_one({"name": payload.name}):
+        raise HTTPException(status_code=400, detail="Source name already exists")
+
+    doc: dict[str, Any] = {
+        "name": payload.name,
+        "url": payload.url,
+        "source_type": payload.source_type.value,
+        "keywords": payload.keywords,
+        "is_active": True,
+        "check_interval": payload.check_interval,
+        "last_checked": None,
+        "created_at": datetime.now(timezone.utc),
+    }
+    res = await sources_col().insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return _src_public(doc)
 
 
-@router.get("/sources", response_model=list[SourceResponse])
-async def list_sources(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all monitoring sources"""
-    result = await db.execute(
-        select(MonitoringSource).order_by(desc(MonitoringSource.created_at))
-    )
-    return result.scalars().all()
+@router.get("/sources", response_model=list[SourcePublic])
+async def list_sources(current=Depends(get_current_user)) -> list[SourcePublic]:
+    cursor = sources_col().find({}).sort("created_at", -1)
+    return [_src_public(d) async for d in cursor]
 
 
-@router.delete("/sources/{source_id}", status_code=204)
-async def delete_source(
-    source_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a monitoring source"""
-    result = await db.execute(
-        select(MonitoringSource).where(MonitoringSource.id == source_id)
-    )
-    source = result.scalar_one_or_none()
-    if not source:
+@router.delete("/sources/{source_id}", status_code=204, response_model=None)
+async def delete_source(source_id: str, current=Depends(get_current_user)):
+    try:
+        oid = ObjectId(source_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid source id")
+    res = await sources_col().delete_one({"_id": oid})
+    if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Source not found")
-    await db.delete(source)
 
 
-@router.get("/alerts", response_model=list[AlertResponse])
-async def get_alerts(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get recent alerts"""
-    result = await db.execute(
-        select(Alert).order_by(desc(Alert.created_at)).limit(100)
-    )
-    return result.scalars().all()
+# ---------- alerts ----------
+
+
+@router.get("/alerts", response_model=list[AlertPublic])
+async def list_alerts(current=Depends(get_current_user)) -> list[AlertPublic]:
+    cursor = alerts_col().find({}).sort("created_at", -1).limit(100)
+    return [_alert_public(d) async for d in cursor]
 
 
 @router.patch("/alerts/{alert_id}/read")
-async def mark_alert_read(
-    alert_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Mark an alert as read"""
-    result = await db.execute(select(Alert).where(Alert.id == alert_id))
-    alert = result.scalar_one_or_none()
-    if not alert:
+async def mark_alert_read(alert_id: str, current=Depends(get_current_user)) -> dict:
+    try:
+        oid = ObjectId(alert_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid alert id")
+    res = await alerts_col().update_one({"_id": oid}, {"$set": {"is_read": True}})
+    if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Alert not found")
-    alert.is_read = True
     return {"message": "Alert marked as read"}
 
 
 @router.patch("/alerts/{alert_id}/resolve")
-async def resolve_alert(
-    alert_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve an alert"""
-    result = await db.execute(select(Alert).where(Alert.id == alert_id))
-    alert = result.scalar_one_or_none()
-    if not alert:
+async def resolve_alert(alert_id: str, current=Depends(get_current_user)) -> dict:
+    try:
+        oid = ObjectId(alert_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid alert id")
+    res = await alerts_col().update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "is_resolved": True,
+                "resolved_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Alert not found")
-    alert.is_resolved = True
-    alert.resolved_at = datetime.now(timezone.utc)
     return {"message": "Alert resolved"}
 
 
+# ---------- dashboard ----------
+
+
 @router.get("/dashboard/metrics", response_model=DashboardMetrics)
-async def get_dashboard_metrics(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get dashboard metrics"""
-    from sqlalchemy import func
-    from app.models.analysis import Analysis
+async def dashboard_metrics(current=Depends(get_current_user)) -> DashboardMetrics:
+    now = datetime.now(timezone.utc)
+    yesterday = now - timedelta(hours=24)
+    day_before = yesterday - timedelta(hours=24)
 
-    # Total analyses
-    total_analyses = (
-        await db.execute(select(func.count()).select_from(Analysis))
-    ).scalar() or 0
+    total_analyses = await analyses_col().count_documents({})
+    total_alerts = await alerts_col().count_documents({})
+    critical_alerts = await alerts_col().count_documents(
+        {"threat_level": "critical", "is_resolved": False}
+    )
+    high_alerts = await alerts_col().count_documents(
+        {"threat_level": "high", "is_resolved": False}
+    )
+    medium_alerts = await alerts_col().count_documents(
+        {"threat_level": "medium", "is_resolved": False}
+    )
+    low_alerts = await alerts_col().count_documents(
+        {"threat_level": "low", "is_resolved": False}
+    )
+    active_sources = await sources_col().count_documents({"is_active": True})
 
-    # Alerts counts
-    total_alerts = (
-        await db.execute(select(func.count()).select_from(Alert))
-    ).scalar() or 0
+    # avg_threat_score
+    avg_score = 0.0
+    try:
+        pipeline_avg = [
+            {"$match": {"status": "completed"}},
+            {"$group": {"_id": None, "avg": {"$avg": "$threat_score"}}},
+        ]
+        async for row in analyses_col().aggregate(pipeline_avg):
+            avg_score = float(row.get("avg") or 0.0)
+    except Exception:
+        pass
 
-    critical_alerts = (
-        await db.execute(
-            select(func.count())
-            .select_from(Alert)
-            .where(Alert.threat_level == "critical", Alert.is_resolved == False)  # noqa: E712
+    # analyses_today
+    analyses_today = 0
+    try:
+        analyses_today = await analyses_col().count_documents(
+            {"created_at": {"$gte": yesterday}}
         )
-    ).scalar() or 0
+    except Exception:
+        pass
 
-    high_alerts = (
-        await db.execute(
-            select(func.count())
-            .select_from(Alert)
-            .where(Alert.threat_level == "high", Alert.is_resolved == False)  # noqa: E712
-        )
-    ).scalar() or 0
+    # threat_trend_24h — compare avg of last 24h vs previous 24h
+    threat_trend_24h = 0.0
+    try:
+        pipeline_24h = [
+            {"$match": {"status": "completed", "created_at": {"$gte": yesterday}}},
+            {"$group": {"_id": None, "avg": {"$avg": "$threat_score"}}},
+        ]
+        avg_24h = 0.0
+        async for row in analyses_col().aggregate(pipeline_24h):
+            avg_24h = float(row.get("avg") or 0.0)
 
-    # Active sources
-    active_sources = (
-        await db.execute(
-            select(func.count())
-            .select_from(MonitoringSource)
-            .where(MonitoringSource.is_active == True)  # noqa: E712
-        )
-    ).scalar() or 0
+        pipeline_prev = [
+            {"$match": {"status": "completed", "created_at": {"$gte": day_before, "$lt": yesterday}}},
+            {"$group": {"_id": None, "avg": {"$avg": "$threat_score"}}},
+        ]
+        avg_prev = 0.0
+        async for row in analyses_col().aggregate(pipeline_prev):
+            avg_prev = float(row.get("avg") or 0.0)
 
-    # Avg threat score
-    avg_score = (
-        await db.execute(
-            select(func.avg(Analysis.threat_score)).where(
-                Analysis.status == "completed"
-            )
-        )
-    ).scalar() or 0.0
+        threat_trend_24h = round(avg_24h - avg_prev, 4)
+    except Exception:
+        pass
+
+    # category_breakdown — aggregate keyword hits from recent analyses
+    category_breakdown: Dict[str, int] = {}
+    try:
+        _CATEGORY_KEYWORDS: Dict[str, list] = {
+            "violence": ["kill", "attack", "bomb", "weapon", "shoot", "murder", "assault", "explode"],
+            "extremism": ["jihad", "martyr", "caliphate", "crusade", "radical", "extremist", "infidel"],
+            "planning": ["plan", "target", "coordinate", "recruit", "operation", "execute", "strategy"],
+            "financing": ["fund", "donate", "crypto", "money", "launder", "finance", "payment"],
+        }
+        pipeline_cat = [
+            {"$match": {"status": "completed", "created_at": {"$gte": yesterday}}},
+            {"$project": {"keywords": 1}},
+        ]
+        async for doc in analyses_col().aggregate(pipeline_cat):
+            kws = doc.get("keywords") or []
+            lower_kws = [k.lower() for k in kws]
+            for category, terms in _CATEGORY_KEYWORDS.items():
+                if any(term in kw for kw in lower_kws for term in terms):
+                    category_breakdown[category] = category_breakdown.get(category, 0) + 1
+    except Exception:
+        pass
+
+    # source_breakdown — count by source_type in collected_items
+    source_breakdown: Dict[str, int] = {}
+    try:
+        from app.core.database import collected_items_col
+        pipeline_src = [
+            {"$group": {"_id": "$source_type", "count": {"$sum": 1}}},
+        ]
+        async for row in collected_items_col().aggregate(pipeline_src):
+            src_type = row.get("_id") or "unknown"
+            source_breakdown[src_type] = row.get("count", 0)
+    except Exception:
+        pass
+
+    # Count upload-based analyses as "upload" in source_breakdown
+    try:
+        upload_count = await analyses_col().count_documents({"analysis_type": "document"})
+        if upload_count > 0:
+            source_breakdown["upload"] = source_breakdown.get("upload", 0) + upload_count
+    except Exception:
+        pass
+
+    # Count text analyses as "text" in source_breakdown
+    try:
+        text_count = await analyses_col().count_documents({"analysis_type": "text"})
+        if text_count > 0:
+            source_breakdown["text"] = source_breakdown.get("text", 0) + text_count
+    except Exception:
+        pass
 
     return DashboardMetrics(
         total_analyses=total_analyses,
         total_alerts=total_alerts,
         critical_alerts=critical_alerts,
         high_alerts=high_alerts,
+        medium_alerts=medium_alerts,
+        low_alerts=low_alerts,
         active_sources=active_sources,
-        avg_threat_score=round(float(avg_score), 4),
+        avg_threat_score=round(avg_score, 4),
+        category_breakdown=category_breakdown,
+        threat_trend_24h=threat_trend_24h,
+        analyses_today=analyses_today,
+        source_breakdown=source_breakdown,
+        active_model=_ml.ACTIVE_MODEL_NAME or "not loaded",
+        model_f1=_ml.ACTIVE_MODEL_F1,
     )
+
+
+# ---------- manual scan trigger ----------
+
+
+@router.post("/scan/run")
+async def run_scan_now(current=Depends(get_current_user)) -> dict:
+    """Trigger an immediate poll of every active source."""
+    return await run_all_sources()
+
+
+# ---------- real-time alert stream ----------
+
+
+@router.websocket("/live")
+async def live_alerts(websocket: WebSocket) -> None:
+    """
+    Stream newly-raised alerts over WebSocket.
+
+    The client must either:
+      * send the JWT as the `token` query param:  /api/v1/monitoring/live?token=xxx
+      * or send `{"type": "auth", "token": "xxx"}` as the first message.
+    """
+    await websocket.accept()
+
+    token = websocket.query_params.get("token")
+    try:
+        if not token:
+            msg = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+            token = msg.get("token")
+        if not token:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        decode_access_token(token)
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    await broadcaster.subscribe(queue)
+    try:
+        await websocket.send_json({"event": "connected"})
+        while True:
+            event = await queue.get()
+            await websocket.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broadcaster.unsubscribe(queue)

@@ -4,15 +4,19 @@ import { QueryClient, QueryClientProvider } from 'react-query';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
-import Upload from './pages/Upload';
+import Overview from './pages/Dashboard';
+import Analyse from './pages/Analyse';
 import Monitoring from './pages/Monitoring';
 import Trends from './pages/Trends';
-import ExtremismContent from './pages/ExtremismContent';
+import IntelFeed from './pages/IntelFeed';
+import ThreatMap from './pages/ThreatMap';
 import Reports from './pages/Reports';
 import Login from './pages/Login';
+
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,7 +28,20 @@ const queryClient = new QueryClient({
 });
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+  
+  // Wait for auth state to load before redirecting
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
@@ -39,18 +56,28 @@ const AppRoutes: React.FC = () => {
         path="/"
         element={
           <ProtectedRoute>
-            <Layout title="Dashboard">
-              <Dashboard />
+            <Layout>
+              <Overview />
             </Layout>
           </ProtectedRoute>
         }
       />
       <Route
-        path="/upload"
+        path="/analyse"
         element={
           <ProtectedRoute>
-            <Layout title="Upload Documents">
-              <Upload />
+            <Layout>
+              <Analyse />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/intel-feed"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <IntelFeed />
             </Layout>
           </ProtectedRoute>
         }
@@ -59,8 +86,18 @@ const AppRoutes: React.FC = () => {
         path="/monitoring"
         element={
           <ProtectedRoute>
-            <Layout title="Live Monitoring">
+            <Layout>
               <Monitoring />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/threat-map"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <ThreatMap />
             </Layout>
           </ProtectedRoute>
         }
@@ -69,18 +106,8 @@ const AppRoutes: React.FC = () => {
         path="/trends"
         element={
           <ProtectedRoute>
-            <Layout title="Reddit Threat Trends">
+            <Layout>
               <Trends />
-            </Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/extremism-content"
-        element={
-          <ProtectedRoute>
-            <Layout title="Extremism Content">
-              <ExtremismContent />
             </Layout>
           </ProtectedRoute>
         }
@@ -89,7 +116,7 @@ const AppRoutes: React.FC = () => {
         path="/reports"
         element={
           <ProtectedRoute>
-            <Layout title="Analysis Reports">
+            <Layout>
               <Reports />
             </Layout>
           </ProtectedRoute>
@@ -102,14 +129,16 @@ const AppRoutes: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <AppRoutes />
-          <ToastContainer position="top-right" autoClose={5000} />
-        </Router>
-      </AuthProvider>
-    </QueryClientProvider>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <AppRoutes />
+            <ToastContainer position="top-right" autoClose={5000} />
+          </Router>
+        </AuthProvider>
+      </QueryClientProvider>
+    </GoogleOAuthProvider>
   );
 };
 

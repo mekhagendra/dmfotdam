@@ -1,38 +1,35 @@
-"""
-Alert database model
-"""
+"""Alert models for MongoDB + API."""
+
+from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, JSON
-from app.core.database import Base
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, Field
 
 
-class Alert(Base):
-    __tablename__ = "alerts"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False)
-    description = Column(Text)
-    threat_level = Column(String(20), nullable=False)  # low, medium, high, critical
-    threat_score = Column(Float, default=0.0)
-    source = Column(String(255))  # where the threat was detected
-    source_type = Column(String(50))  # document, url, social_media
-    details = Column(JSON)
-    is_read = Column(Boolean, default=False)
-    is_resolved = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    resolved_at = Column(DateTime, nullable=True)
+class AlertInDB(BaseModel):
+    title: str
+    description: Optional[str] = None
+    threat_level: str                      # low | medium | high | critical
+    threat_score: float = 0.0
+    source: Optional[str] = None           # URL or identifier
+    source_type: Optional[str] = None      # reddit | rss | telegram | document | url
+    details: Optional[Dict[str, Any]] = None
+    is_read: bool = False
+    is_resolved: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_at: Optional[datetime] = None
 
 
-class MonitoringSource(Base):
-    __tablename__ = "monitoring_sources"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    url = Column(String(500), nullable=False)
-    source_type = Column(String(50), nullable=False)  # website, rss, social_media
-    keywords = Column(JSON)  # keywords to monitor
-    is_active = Column(Boolean, default=True)
-    check_interval = Column(Integer, default=300)  # seconds between checks
-    last_checked = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+class AlertPublic(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    threat_level: str
+    threat_score: float
+    source: Optional[str] = None
+    source_type: Optional[str] = None
+    is_read: bool
+    is_resolved: bool
+    created_at: datetime

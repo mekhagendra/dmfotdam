@@ -1,115 +1,284 @@
 """
-Authentication endpoints
+Authentication endpoints — register (with OTP), login, Google OAuth, current-user.
 """
 
+from __future__ import annotations
+
+import asyncio
+import random
+import string
+from datetime import datetime, timezone
+from email.message import EmailMessage
+
+import aiosmtplib
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from pydantic import BaseModel, EmailStr, Field
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
-from app.core.database import get_db
+from app.api.dependencies import get_current_user, user_to_public
+from app.core.config import get_settings
+from app.core.database import get_db, users_col
 from app.core.security import (
-    verify_password,
-    get_password_hash,
     create_access_token,
-    get_current_user_id,
+    get_password_hash,
+    verify_password,
 )
-from app.models.user import User
+from app.models.user import (
+    GoogleLoginRequest,
+    OTPRequest,
+    OTPVerifyAndRegister,
+    TokenResponse,
+    UserLogin,
+    UserPublic,
+)
 
-router = APIRouter()
-
-
-class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)
-
-
-class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    password: str = Field(..., min_length=6)
-    full_name: str = Field(None, max_length=100)
+router = APIRouter(prefix="/auth", tags=["auth"])
+_settings = get_settings()
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+# --------------- helpers ---------------
+
+def _otp_col():
+    """Return the `otp_codes` MongoDB collection."""
+    return get_db()["otp_codes"]
 
 
-class UserResponse(BaseModel):
-    id: int
-    username: str
-    email: str
-    full_name: str | None
-    role: str
+def _generate_otp(length: int = 6) -> str:
+    return "".join(random.choices(string.digits, k=length))
 
-    class Config:
-        from_attributes = True
+
+async def _send_email(to: str, subject: str, body: str) -> None:
+    """Send an email via SMTP. Raises on failure."""
+    if not _settings.SMTP_USER or not _settings.SMTP_PASSWORD:
+        raise HTTPException(
+            status_code=503,
+            detail="SMTP not configured — cannot send OTP email",
+        )
+    msg = EmailMessage()
+    msg["From"] = _settings.SMTP_FROM or _settings.SMTP_USER
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    await aiosmtplib.send(
+        msg,
+        hostname=_settings.SMTP_HOST,
+        port=_settings.SMTP_PORT,
+        username=_settings.SMTP_USER,
+        password=_settings.SMTP_PASSWORD,
+        start_tls=True,
+    )
+
+
+# --------------- OTP flow ---------------
+
+@router.post("/send-otp", status_code=200)
+async def send_otp(payload: OTPRequest) -> dict:
+    """Generate a 6-digit OTP, persist it, and email it to the user."""
+    # Fail-fast checks — email and username must be free
+    if await users_col().find_one({"email": payload.email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if await users_col().find_one({"username": payload.username}):
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    otp = _generate_otp()
+    expires_at = datetime.now(timezone.utc).timestamp() + (
+        _settings.OTP_EXPIRE_MINUTES * 60
+    )
+
+    # Upsert — one pending OTP per email at a time
+    await _otp_col().update_one(
+        {"email": payload.email},
+        {
+            "$set": {
+                "otp": otp,
+                "username": payload.username,
+                "expires_at": expires_at,
+                "verified": False,
+                "created_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+
+    subject = "TDM — Your verification code"
+    body = (
+        f"Hello {payload.username},\n\n"
+        f"Your one-time verification code is: {otp}\n\n"
+        f"This code expires in {_settings.OTP_EXPIRE_MINUTES} minutes.\n"
+        f"If you did not request this, please ignore this email.\n"
+    )
+    await _send_email(payload.email, subject, body)
+
+    return {"message": "OTP sent — check your email"}
+
+
+@router.post("/verify-otp-register", response_model=TokenResponse, status_code=201)
+async def verify_otp_register(payload: OTPVerifyAndRegister) -> TokenResponse:
+    """Verify the OTP, then create the user and return a JWT."""
+    record = await _otp_col().find_one({"email": payload.email})
+    if not record:
+        raise HTTPException(status_code=400, detail="No OTP found for this email — request one first")
+
+    # Check expiry
+    if datetime.now(timezone.utc).timestamp() > record["expires_at"]:
+        await _otp_col().delete_one({"email": payload.email})
+        raise HTTPException(status_code=400, detail="OTP expired — request a new one")
+
+    # Check code
+    if record["otp"] != payload.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    # Re-check uniqueness (race-condition guard)
+    if await users_col().find_one({"email": payload.email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if await users_col().find_one({"username": payload.username}):
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "username": payload.username,
+        "email": payload.email,
+        "full_name": payload.full_name,
+        "hashed_password": get_password_hash(payload.password),
+        "role": "analyst",
+        "is_active": True,
+        "auth_provider": "local",
+        "google_sub": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await users_col().insert_one(doc)
+    doc["_id"] = result.inserted_id
+
+    # Clean up OTP
+    await _otp_col().delete_one({"email": payload.email})
+
+    token = create_access_token(subject=str(result.inserted_id))
+    return TokenResponse(
+        access_token=token,
+        user=UserPublic(**user_to_public(doc)),
+    )
+
+
+# --------------- Google OAuth ---------------
+
+@router.post("/google", response_model=TokenResponse)
+async def google_login(payload: GoogleLoginRequest) -> TokenResponse:
+    """
+    Accept a Google ID-token from the frontend, verify it, and either
+    log in an existing user or create a new account.
+    """
+    if not _settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+
+    try:
+        id_info = await asyncio.to_thread(
+            google_id_token.verify_oauth2_token,
+            payload.credential,
+            google_requests.Request(),
+            _settings.GOOGLE_CLIENT_ID,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid Google token: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google token verification failed: {exc}")
+
+    google_sub: str = id_info["sub"]
+    email: str = id_info.get("email", "")
+    full_name: str = id_info.get("name", "")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    # Look up by google_sub first, then by email
+    user = await users_col().find_one({"google_sub": google_sub})
+    if not user:
+        user = await users_col().find_one({"email": email})
+
+    if user:
+        # Existing user — update google_sub if missing (link accounts)
+        if not user.get("google_sub"):
+            await users_col().update_one(
+                {"_id": user["_id"]},
+                {"$set": {"google_sub": google_sub, "auth_provider": "google"}},
+            )
+        if not user.get("is_active", True):
+            raise HTTPException(status_code=403, detail="Inactive user")
+    else:
+        # New user — auto-register
+        now = datetime.now(timezone.utc)
+        # Derive a unique username from the email local part
+        base_username = email.split("@")[0][:40]
+        username = base_username
+        counter = 1
+        while await users_col().find_one({"username": username}):
+            username = f"{base_username}{counter}"
+            counter += 1
+
+        doc = {
+            "username": username,
+            "email": email,
+            "full_name": full_name or None,
+            "hashed_password": "",  # no password for Google-only users
+            "role": "analyst",
+            "is_active": True,
+            "auth_provider": "google",
+            "google_sub": google_sub,
+            "created_at": now,
+            "updated_at": now,
+        }
+        result = await users_col().insert_one(doc)
+        doc["_id"] = result.inserted_id
+        user = doc
+
+    token = create_access_token(subject=str(user["_id"]))
+    return TokenResponse(
+        access_token=token,
+        user=UserPublic(**user_to_public(user)),
+    )
+
+
+# --------------- Classic login / register (kept for backward compat) ---------------
+
+@router.post("/register", response_model=UserPublic, status_code=201)
+async def register_legacy(payload: OTPVerifyAndRegister) -> UserPublic:
+    """
+    Legacy register path — still requires a valid OTP.
+    Prefer /auth/verify-otp-register which also returns a JWT.
+    """
+    result = await verify_otp_register(payload)
+    return result.user
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Authenticate user and return JWT token"""
-    result = await db.execute(
-        select(User).where(User.username == request.username)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user or not verify_password(request.password, user.hashed_password):
+async def login(payload: UserLogin) -> TokenResponse:
+    user = await users_col().find_one({"username": payload.username})
+    if not user or not user.get("hashed_password"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Invalid username or password",
         )
-
-    if not user.is_active:
+    if not verify_password(payload.password, user["hashed_password"]):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
         )
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Inactive user")
 
-    access_token = create_access_token(data={"sub": str(user.id)})
-    return TokenResponse(access_token=access_token)
-
-
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """Register a new user"""
-    # Check if username exists
-    result = await db.execute(select(User).where(User.username == request.username))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already registered",
-        )
-
-    # Check if email exists
-    result = await db.execute(select(User).where(User.email == request.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered",
-        )
-
-    user = User(
-        username=request.username,
-        email=request.email,
-        hashed_password=get_password_hash(request.password),
-        full_name=request.full_name,
+    token = create_access_token(subject=str(user["_id"]))
+    return TokenResponse(
+        access_token=token,
+        user=UserPublic(**user_to_public(user)),
     )
-    db.add(user)
-    await db.flush()
-    await db.refresh(user)
-    return user
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get current user profile"""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+@router.get("/me", response_model=UserPublic)
+async def me(current=Depends(get_current_user)) -> UserPublic:
+    return UserPublic(**user_to_public(current))
+
+
+@router.post("/logout")
+async def logout() -> dict:
+    return {"message": "Logged out"}

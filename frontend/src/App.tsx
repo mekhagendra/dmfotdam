@@ -15,6 +15,7 @@ import IntelFeed from './pages/IntelFeed';
 import ThreatMap from './pages/ThreatMap';
 import Reports from './pages/Reports';
 import Login from './pages/Login';
+import AdminUsers from './pages/AdminUsers';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
@@ -45,6 +46,31 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
+  return <>{children}</>;
+};
+
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user?.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
   return <>{children}</>;
 };
 
@@ -120,6 +146,16 @@ const AppRoutes: React.FC = () => {
               <Reports />
             </Layout>
           </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/users"
+        element={
+          <AdminRoute>
+            <Layout>
+              <AdminUsers />
+            </Layout>
+          </AdminRoute>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />

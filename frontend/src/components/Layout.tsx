@@ -7,16 +7,6 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-const primaryLinks = [
-  { path: '/', label: 'overview' },
-  { path: '/analyse', label: 'analyse' },
-  { path: '/intel-feed', label: 'intel feed' },
-  { path: '/monitoring', label: 'monitoring' },
-  // { path: '/threat-map', label: 'threat map' },
-  { path: '/trends', label: 'trends' },
-  { path: '/reports', label: 'reports' },
-];
-
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -24,6 +14,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { data: unreadCount = 0 } = useUnreadAlertCount();
   const [dropdownOpen, setDropdownOpen] = useState<boolean>(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const primaryLinks = [
+    { path: '/', label: 'overview' },
+    { path: '/analyse', label: 'Scan' },
+    { path: '/intel-feed', label: 'Threats' },
+    { path: '/monitoring', label: 'Source' },
+    { path: '/trends', label: 'Trends' },
+    { path: '/reports', label: 'Reports' },
+    ...(user?.role === 'admin' ? [{ path: '/admin/users', label: 'Users' }] : []),
+  ];
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -36,7 +36,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, []);
 
   const initials = (user?.username?.toUpperCase() ?? 'AN').slice(0, 2);
-  const displayName = user?.username ?? 'analyst';
+  const displayName = user?.username ?? 'user';
 
   return (
     <div style={{ minHeight: '100vh', background: '#060A12' }}>

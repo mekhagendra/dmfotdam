@@ -20,23 +20,31 @@ const Login: React.FC = () => {
   const [otp, setOtp] = useState('');
 
   const [loading, setLoading] = useState(false);
-  const { login, googleLogin, isAuthenticated, isLoading } = useAuth();
+  const { user, login, googleLogin, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
 
   // Redirect if already authenticated
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      navigate('/', { replace: true });
+      if (user?.role === 'admin') {
+        navigate('/admin/users', { replace: true });
+      } else {
+        navigate('/', { replace: true });
+      }
     }
-  }, [isAuthenticated, isLoading, navigate]);
+  }, [isAuthenticated, isLoading, navigate, user]);
 
   // ---------- Login ----------
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(username, password);
-      navigate('/');
+      const profile = await login(username, password);
+      if (profile.role === 'admin') {
+        navigate('/admin/users');
+      } else {
+        navigate('/');
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Login failed');
     } finally {
@@ -71,8 +79,9 @@ const Login: React.FC = () => {
         password,
         full_name: fullName || undefined,
       });
-      toast.success('Account created — welcome!');
-      navigate('/');
+      toast.success('Account created. Waiting for admin approval before login.');
+      setStep('login');
+      setOtp('');
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Verification failed');
     } finally {
@@ -85,8 +94,12 @@ const Login: React.FC = () => {
     if (!res.credential) return;
     setLoading(true);
     try {
-      await googleLogin(res.credential);
-      navigate('/');
+      const profile = await googleLogin(res.credential);
+      if (profile.role === 'admin') {
+        navigate('/admin/users');
+      } else {
+        navigate('/');
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Google sign-in failed');
     } finally {

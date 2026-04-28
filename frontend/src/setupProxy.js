@@ -8,22 +8,26 @@ module.exports = function (app) {
   });
 
   // Proxy REST API calls to the FastAPI backend
-  app.use(
-    '/api',
-    createProxyMiddleware({
-      target: 'http://localhost:8000',
-      changeOrigin: true,
-      // Do NOT set ws:true here — it hijacks the dev server's own /ws hot-reload socket
-    })
-  );
+  const apiProxy = createProxyMiddleware({
+    target: 'http://localhost:8000',
+    changeOrigin: true,
+    ws: false, // Handled manually below to avoid intercepting webpack HMR (/ws)
+    onError: (err, req, res) => {
+      console.error('Proxy error:', err);
+      if (res && !res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Bad Gateway');
+      }
+    },
+  });
 
-  // Proxy only the app's WebSocket path to the backend
-  app.use(
-    '/api/v1/ws',
-    createProxyMiddleware({
-      target: 'http://localhost:8000',
-      changeOrigin: true,
-      ws: true,
-    })
-  );
+  app.use('/api', apiProxy);
+
+  // Only proxy WebSocket upgrades for /api/* paths.
+  // This prevents webpack HMR (/ws) from being forwarded to the backend.
+  app.on('upgrade', (req, socket, head) => {
+    if (req.url && req.url.startsWith('/api')) {
+      apiProxy.upgrade(req, socket, head);
+    }
+  });
 };

@@ -47,7 +47,8 @@ export function useUploadDocument() {
 export function useAnalyzeText() {
   const queryClient = useQueryClient();
   return useMutation(
-    (text: string) => detectionService.analyzeText(text),
+    ({ text, model }: { text: string; model?: string }) => 
+      detectionService.analyzeText(text, model || 'ensemble'),
     {
       onSuccess: () => {
         toast.success('Text analysis completed');
@@ -59,6 +60,10 @@ export function useAnalyzeText() {
       },
     }
   );
+}
+
+export function useAvailableModels() {
+  return useQuery('availableModels', detectionService.getAvailableModels);
 }
 
 export function useCreateSource() {

@@ -1,18 +1,20 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { useUploadDocument, useAnalyzeText, useUploadHistory } from '../hooks/useDetection';
+import { useUploadDocument, useAnalyzeText, useUploadHistory, useAvailableModels } from '../hooks/useDetection';
 import { AnalysisResult, detectionService } from '../services/detection.service';
 import ThreatBadge from '../components/ThreatBadge';
 import { formatDate } from '../utils/formatDate';
 
 const Analyse: React.FC = () => {
   const [textInput, setTextInput] = useState('');
+  const [selectedModel, setSelectedModel] = useState('ensemble');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [documentReport, setDocumentReport] = useState<AnalysisResult | null>(null);
   const uploadMutation = useUploadDocument();
   const analyzeMutation = useAnalyzeText();
   const { data: history, isLoading: historyLoading } = useUploadHistory();
+  const { data: availableModels = [] } = useAvailableModels();
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -53,12 +55,35 @@ const Analyse: React.FC = () => {
 
   const handleTextAnalysis = async () => {
     if (textInput.trim().length < 10) return;
-    const result = await analyzeMutation.mutateAsync(textInput);
+    const result = await analyzeMutation.mutateAsync({ text: textInput, model: selectedModel });
     setAnalysisResult(result);
   };
 
   return (
     <div className="space-y-6">
+      {/* Model Selector */}
+      {availableModels.length > 0 && (
+        <div className="bg-panel rounded-lg border border-edge p-6">
+          <h2 className="text-lg font-semibold mb-3 text-slate-100">Select ML Model</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {availableModels.map((model) => (
+              <button
+                key={model.id}
+                onClick={() => setSelectedModel(model.id)}
+                className={`p-3 rounded-lg border transition-all text-left ${
+                  selectedModel === model.id
+                    ? 'bg-primary-600/20 border-primary-500'
+                    : 'bg-slate-900/30 border-slate-600 hover:border-slate-500'
+                }`}
+              >
+                <div className="font-medium text-slate-200">{model.name}</div>
+                <div className="text-xs text-slate-400 mt-1">{model.description}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* File Upload */}
       <div className="bg-panel rounded-lg border border-edge p-6">
         <h2 className="text-xl font-semibold mb-4 text-slate-100">Analyse content</h2>
@@ -122,6 +147,11 @@ const Analyse: React.FC = () => {
       {/* Text Analysis */}
       <div className="bg-panel rounded-lg border border-edge p-6">
         <h2 className="text-xl font-semibold mb-4 text-slate-100">Analyze Text</h2>
+        {selectedModel && (
+          <div className="mb-4 p-3 bg-slate-900/50 rounded border border-slate-700 text-sm text-slate-300">
+            Using model: <span className="text-primary-400 font-medium">{availableModels.find(m => m.id === selectedModel)?.name || selectedModel}</span>
+          </div>
+        )}
         <textarea
           value={textInput}
           onChange={(e) => setTextInput(e.target.value)}

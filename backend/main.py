@@ -37,6 +37,7 @@ from app.services.collector_manager import (
     ensure_default_sources,
     run_all_sources,
 )
+from app.services.user_bootstrap import ensure_seed_admin_user
 
 setup_logging()
 logger = get_logger(__name__)
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
     # ---- startup
     logger.info("app.starting", environment=settings.ENVIRONMENT)
     await connect_to_mongo()
+    await ensure_seed_admin_user()
     await ensure_default_sources()
     
     # Pre-load ML model in background thread so it's ready before first request

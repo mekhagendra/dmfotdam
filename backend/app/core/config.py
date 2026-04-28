@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12  # 12h
 
+    # --- Seed Admin User ---
+    SEED_ADMIN_EMAIL: str = "kneupane32@gmail.com"
+    SEED_ADMIN_USERNAME: str = "admin"
+    SEED_ADMIN_PASSWORD: str = "Test@123"
+    SEED_ADMIN_FULL_NAME: str = "System Administrator"
+
     # --- Uploads ---
     MAX_FILE_SIZE: int = 52_428_800  # 50 MB
     UPLOAD_DIR: str = "data/uploads"

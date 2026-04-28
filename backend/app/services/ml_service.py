@@ -29,6 +29,7 @@ Output shape (both success + unavailable):
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -56,6 +57,12 @@ class _ModelHolder:
 
 
 class _FallbackModelHolder:
+    pipe = None
+    error: Optional[str] = None
+    lock = threading.Lock()
+
+
+class _SGDModelHolder:
     pipe = None
     error: Optional[str] = None
     lock = threading.Lock()
@@ -137,6 +144,36 @@ def get_fallback_pipeline():
     return _FallbackModelHolder.pipe
 
 
+def _load_sgd_model():
+    """Load the scikit-learn SGD pipeline from disk. Called under a lock."""
+    import joblib
+
+    model_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "models", "sgd_threat_model.joblib",
+    )
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"SGD model not found at {model_path}")
+    pipe = joblib.load(model_path)
+    logger.info("ml.sgd_model_loaded", path=model_path)
+    return pipe
+
+
+def get_sgd_pipeline():
+    """Return the SGD classifier pipeline, loading from disk on first use."""
+    if _SGDModelHolder.pipe is not None or _SGDModelHolder.error is not None:
+        return _SGDModelHolder.pipe
+
+    with _SGDModelHolder.lock:
+        if _SGDModelHolder.pipe is None and _SGDModelHolder.error is None:
+            try:
+                _SGDModelHolder.pipe = _load_sgd_model()
+            except Exception as exc:
+                _SGDModelHolder.error = str(exc)
+                logger.error("ml.sgd_model_load_failed", error=str(exc))
+    return _SGDModelHolder.pipe
+
+
 # ---------------------------------------------------------------------------
 # Classification helpers
 # ---------------------------------------------------------------------------
@@ -205,8 +242,104 @@ def _extract_threat_score(label_scores: Dict[str, float]) -> float:
     return max(label_scores.values()) if label_scores else 0.0
 
 
-def _classify_sync(text: str) -> Dict[str, Any]:
-    """Run the classifier(s) on text. Uses ensemble when both models are available."""
+def get_available_models() -> List[Dict[str, str]]:
+    """Return a list of available ML models."""
+    models = [
+        {
+            "id": "primary",
+            "name": _settings.HF_MODEL_NAME,
+            "type": "primary",
+            "description": "Primary model (GroNLP/hateBERT - optimized for extremism detection)",
+        }
+    ]
+    if _settings.HF_FALLBACK_MODEL_NAME:
+        models.append(
+            {
+                "id": "fallback",
+                "name": _settings.HF_FALLBACK_MODEL_NAME,
+                "type": "fallback",
+                "description": "Fallback model (Twitter RoBERTa - general toxicity detection)",
+            }
+        )
+        models.append(
+            {
+                "id": "ensemble",
+                "name": "Ensemble (65% primary + 35% fallback)",
+                "type": "ensemble",
+                "description": "Weighted ensemble combining both models",
+            }
+        )
+
+    # Always include SGD if the model file exists
+    sgd_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "models", "sgd_threat_model.joblib",
+    )
+    if os.path.exists(sgd_path):
+        models.append(
+            {
+                "id": "sgd",
+                "name": "SGD Classifier",
+                "type": "traditional_ml",
+                "description": "SGDClassifier with TF-IDF (fast, lightweight traditional ML)",
+            }
+        )
+    return models
+
+
+def _classify_sync(text: str, model: str = "ensemble") -> Dict[str, Any]:
+    """Run the classifier(s) on text.
+    
+    Args:
+        text: The text to classify
+        model: Which model to use: 'primary', 'fallback', 'ensemble', or 'sgd'
+    """
+    # Handle SGD model separately — it doesn't require the HF pipelines
+    if model == "sgd":
+        sgd_pipe = get_sgd_pipeline()
+        if sgd_pipe is None:
+            return {
+                "method": "unavailable",
+                "model": "SGD Classifier",
+                "error": _SGDModelHolder.error or "SGD model not loaded",
+                "threat_score": 0.0,
+                "threat_level": "low",
+                "label_scores": {},
+                "top_label": None,
+                "ensemble": False,
+                "models_used": [],
+            }
+        try:
+            text_input = (text or "").strip()
+            proba = sgd_pipe.predict_proba([text_input])[0]
+            classes = list(sgd_pipe.classes_)
+            label_scores = {cls: round(float(p), 4) for cls, p in zip(classes, proba)}
+            high_score = label_scores.get("high", 0.0)
+            return {
+                "method": "sgd_pipeline",
+                "model": "SGD Classifier",
+                "threat_score": high_score,
+                "threat_level": _score_to_level(high_score),
+                "label_scores": label_scores,
+                "top_label": max(label_scores, key=label_scores.get),
+                "ensemble": False,
+                "models_used": ["SGD Classifier"],
+            }
+        except Exception as exc:
+            logger.error("ml.sgd_inference_failed", error=str(exc))
+            return {
+                "method": "unavailable",
+                "model": "SGD Classifier",
+                "error": str(exc),
+                "threat_score": 0.0,
+                "threat_level": "low",
+                "label_scores": {},
+                "top_label": None,
+                "ensemble": False,
+                "models_used": [],
+            }
+
+    # --- HF pipeline path ---
     pipe = get_pipeline()
     if pipe is None:
         return {
@@ -244,28 +377,47 @@ def _classify_sync(text: str) -> Dict[str, Any]:
         else None
     )
 
-    # --- Fallback model (ensemble) ---
+    # --- Model selection logic ---
     fallback_pipe = get_fallback_pipeline()
     ensemble_used = False
     models_used = [_settings.HF_MODEL_NAME]
     final_threat_score = primary_threat_score
+    selected_model_name = _settings.HF_MODEL_NAME
+    label_scores_to_return = primary_label_scores
 
-    if fallback_pipe is not None:
+    # If fallback requested but not available, fall back to primary
+    if model in ("fallback", "ensemble") and fallback_pipe is None:
+        logger.warning("ml.fallback_requested_but_unavailable", requested_model=model)
+        model = "primary"
+
+    if model == "fallback" and fallback_pipe is not None:
+        try:
+            fallback_label_scores = _run_pipeline(fallback_pipe, text)
+            final_threat_score = _extract_threat_score(fallback_label_scores)
+            selected_model_name = _settings.HF_FALLBACK_MODEL_NAME
+            label_scores_to_return = fallback_label_scores
+            models_used = [_settings.HF_FALLBACK_MODEL_NAME]
+        except Exception as exc:
+            logger.warning("ml.fallback_inference_failed", error=str(exc))
+            model = "primary"
+
+    elif model == "ensemble" and fallback_pipe is not None:
         try:
             fallback_label_scores = _run_pipeline(fallback_pipe, text)
             fallback_threat_score = _extract_threat_score(fallback_label_scores)
             final_threat_score = 0.65 * primary_threat_score + 0.35 * fallback_threat_score
             ensemble_used = True
-            models_used.append(_settings.HF_FALLBACK_MODEL_NAME)
+            models_used = [_settings.HF_MODEL_NAME, _settings.HF_FALLBACK_MODEL_NAME]
         except Exception as exc:
-            logger.warning("ml.fallback_inference_failed", error=str(exc))
+            logger.warning("ml.ensemble_inference_failed", error=str(exc))
+            model = "primary"
 
     return {
         "method": "hf_pipeline",
-        "model": _settings.HF_MODEL_NAME,
+        "model": selected_model_name,
         "threat_score": round(float(final_threat_score), 4),
         "threat_level": _score_to_level(float(final_threat_score)),
-        "label_scores": primary_label_scores,
+        "label_scores": label_scores_to_return,
         "top_label": top_label,
         "ensemble": ensemble_used,
         "models_used": models_used,
@@ -338,12 +490,12 @@ def explain_prediction(text: str) -> dict:
 class MLService:
     """Thin async wrapper so FastAPI handlers can `await` classification."""
 
-    async def classify(self, text: str, explain: bool = False) -> Dict[str, Any]:
-        result = await asyncio.to_thread(_classify_sync, text)
+    async def classify(self, text: str, explain: bool = False, model: str = "ensemble") -> Dict[str, Any]:
+        result = await asyncio.to_thread(_classify_sync, text, model)
         if explain:
             explanation = await asyncio.to_thread(explain_prediction, text)
             result["explanation"] = explanation
         return result
 
-    def classify_sync(self, text: str) -> Dict[str, Any]:
-        return _classify_sync(text)
+    def classify_sync(self, text: str, model: str = "ensemble") -> Dict[str, Any]:
+        return _classify_sync(text, model)

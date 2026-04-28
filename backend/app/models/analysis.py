@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class AnalyzeTextRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=200_000)
+    model: str = Field("ensemble", description="ML model to use: 'primary', 'fallback', or 'ensemble'")
 
 
 class AnalysisInDB(BaseModel):

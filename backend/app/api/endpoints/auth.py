@@ -8,9 +8,7 @@ import asyncio
 import random
 import string
 from datetime import datetime, timezone
-from email.message import EmailMessage
 
-import aiosmtplib
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -27,10 +25,11 @@ from app.models.user import (
     GoogleLoginRequest,
     OTPRequest,
     OTPVerifyAndRegister,
-    TokenResponse,
     UserLogin,
     UserPublic,
+    TokenResponse,
 )
+from app.services.email_service import send_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _settings = get_settings()
@@ -48,26 +47,18 @@ def _generate_otp(length: int = 6) -> str:
 
 
 async def _send_email(to: str, subject: str, body: str) -> None:
-    """Send an email via SMTP. Raises on failure."""
+    """Send an email via SMTP. Raises HTTPException on failure."""
     if not _settings.SMTP_USER or not _settings.SMTP_PASSWORD:
         raise HTTPException(
             status_code=503,
             detail="SMTP not configured — cannot send OTP email",
         )
-    msg = EmailMessage()
-    msg["From"] = _settings.SMTP_FROM or _settings.SMTP_USER
-    msg["To"] = to
-    msg["Subject"] = subject
-    msg.set_content(body)
-
-    await aiosmtplib.send(
-        msg,
-        hostname=_settings.SMTP_HOST,
-        port=_settings.SMTP_PORT,
-        username=_settings.SMTP_USER,
-        password=_settings.SMTP_PASSWORD,
-        start_tls=True,
-    )
+    ok = await send_email(to=to, subject=subject, body=body)
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to send email — check SMTP configuration",
+        )
 
 
 # --------------- OTP flow ---------------
@@ -113,9 +104,9 @@ async def send_otp(payload: OTPRequest) -> dict:
     return {"message": "OTP sent — check your email"}
 
 
-@router.post("/verify-otp-register", response_model=TokenResponse, status_code=201)
-async def verify_otp_register(payload: OTPVerifyAndRegister) -> TokenResponse:
-    """Verify the OTP, then create the user and return a JWT."""
+@router.post("/verify-otp-register", response_model=UserPublic, status_code=201)
+async def verify_otp_register(payload: OTPVerifyAndRegister) -> UserPublic:
+    """Verify the OTP, then create the user in pending state."""
     record = await _otp_col().find_one({"email": payload.email})
     if not record:
         raise HTTPException(status_code=400, detail="No OTP found for this email — request one first")
@@ -141,8 +132,9 @@ async def verify_otp_register(payload: OTPVerifyAndRegister) -> TokenResponse:
         "email": payload.email,
         "full_name": payload.full_name,
         "hashed_password": get_password_hash(payload.password),
-        "role": "analyst",
-        "is_active": True,
+        "role": "customer",
+        "status": "pending",
+        "is_active": False,
         "auth_provider": "local",
         "google_sub": None,
         "created_at": now,
@@ -154,11 +146,7 @@ async def verify_otp_register(payload: OTPVerifyAndRegister) -> TokenResponse:
     # Clean up OTP
     await _otp_col().delete_one({"email": payload.email})
 
-    token = create_access_token(subject=str(result.inserted_id))
-    return TokenResponse(
-        access_token=token,
-        user=UserPublic(**user_to_public(doc)),
-    )
+    return UserPublic(**user_to_public(doc))
 
 
 # --------------- Google OAuth ---------------
@@ -203,8 +191,13 @@ async def google_login(payload: GoogleLoginRequest) -> TokenResponse:
                 {"_id": user["_id"]},
                 {"$set": {"google_sub": google_sub, "auth_provider": "google"}},
             )
-        if not user.get("is_active", True):
-            raise HTTPException(status_code=403, detail="Inactive user")
+        user_status = user.get("status")
+        is_active = user.get("is_active", True)
+        if user_status is None:
+            user_status = "active" if is_active else "pending"
+
+        if user_status != "active" or not is_active:
+            raise HTTPException(status_code=403, detail="Your account is pending admin approval")
     else:
         # New user — auto-register
         now = datetime.now(timezone.utc)
@@ -221,8 +214,9 @@ async def google_login(payload: GoogleLoginRequest) -> TokenResponse:
             "email": email,
             "full_name": full_name or None,
             "hashed_password": "",  # no password for Google-only users
-            "role": "analyst",
-            "is_active": True,
+            "role": "customer",
+            "status": "pending",
+            "is_active": False,
             "auth_provider": "google",
             "google_sub": google_sub,
             "created_at": now,
@@ -231,6 +225,11 @@ async def google_login(payload: GoogleLoginRequest) -> TokenResponse:
         result = await users_col().insert_one(doc)
         doc["_id"] = result.inserted_id
         user = doc
+
+        raise HTTPException(
+            status_code=403,
+            detail="Account created and pending admin approval",
+        )
 
     token = create_access_token(subject=str(user["_id"]))
     return TokenResponse(
@@ -247,8 +246,7 @@ async def register_legacy(payload: OTPVerifyAndRegister) -> UserPublic:
     Legacy register path — still requires a valid OTP.
     Prefer /auth/verify-otp-register which also returns a JWT.
     """
-    result = await verify_otp_register(payload)
-    return result.user
+    return await verify_otp_register(payload)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -264,8 +262,13 @@ async def login(payload: UserLogin) -> TokenResponse:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-    if not user.get("is_active", True):
-        raise HTTPException(status_code=403, detail="Inactive user")
+    user_status = user.get("status")
+    is_active = user.get("is_active", True)
+    if user_status is None:
+        user_status = "active" if is_active else "pending"
+
+    if user_status != "active" or not is_active:
+        raise HTTPException(status_code=403, detail="Your account is pending admin approval")
 
     token = create_access_token(subject=str(user["_id"]))
     return TokenResponse(

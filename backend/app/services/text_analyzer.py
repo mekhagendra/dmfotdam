@@ -117,12 +117,18 @@ class TextAnalyzer:
 
     # ------------------------------------------------------------------ analysis
 
-    async def analyze(self, text: str, explain: bool = False) -> Dict[str, Any]:
-        """Run the classifier and return a normalized analysis result."""
+    async def analyze(self, text: str, explain: bool = False, model: str = "ensemble") -> Dict[str, Any]:
+        """Run the classifier and return a normalized analysis result.
+        
+        Args:
+            text: Text to analyze
+            explain: Include SHAP explanations
+            model: ML model to use ('primary', 'fallback', or 'ensemble')
+        """
         if not text or not text.strip():
             return self._empty_result()
 
-        ml = await self._ml.classify(text, explain=explain)
+        ml = await self._ml.classify(text, explain=explain, model=model)
 
         threat_score = float(ml.get("threat_score", 0.0))
         threat_level = ml.get("threat_level", "low")

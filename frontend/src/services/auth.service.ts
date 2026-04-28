@@ -31,6 +31,7 @@ export interface UserProfile {
   email: string;
   full_name: string | null;
   role: string;
+  status: 'pending' | 'active';
   is_active: boolean;
   created_at: string;
 }
@@ -59,10 +60,9 @@ export const authService = {
     return response.data;
   },
 
-  /** Step 2 — verify OTP and register, returns JWT */
-  async verifyOtpAndRegister(data: OTPRegisterRequest): Promise<TokenResponse> {
-    const response = await api.post<TokenResponse>('/auth/verify-otp-register', data);
-    localStorage.setItem('access_token', response.data.access_token);
+  /** Step 2 — verify OTP and register in pending state */
+  async verifyOtpAndRegister(data: OTPRegisterRequest): Promise<UserProfile> {
+    const response = await api.post<UserProfile>('/auth/verify-otp-register', data);
     return response.data;
   },
 

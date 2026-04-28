@@ -1,5 +1,12 @@
 import api from './api';
 
+export interface MLModel {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+}
+
 export interface AnalysisResult {
   id: string;
   analysis_type: string;
@@ -91,8 +98,13 @@ export const detectionService = {
     return response.data;
   },
 
-  async analyzeText(text: string): Promise<AnalysisResult> {
-    const response = await api.post<AnalysisResult>('/detection/analyze-text', { text });
+  async analyzeText(text: string, model: string = 'ensemble'): Promise<AnalysisResult> {
+    const response = await api.post<AnalysisResult>('/detection/analyze-text', { text, model });
+    return response.data;
+  },
+
+  async getAvailableModels(): Promise<MLModel[]> {
+    const response = await api.get<MLModel[]>('/detection/models');
     return response.data;
   },
 

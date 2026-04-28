@@ -9,13 +9,14 @@ import uuid
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from app.api.dependencies import get_current_user
 from app.core.config import get_settings
 from app.core.database import analyses_col, documents_col
 from app.models.document import DocumentPublic
+from app.services.email_service import build_scan_report_email, send_email
 from app.services.text_analyzer import TextAnalyzer
 from app.utils.file_handler import save_upload_file
 
@@ -45,6 +46,7 @@ def _doc_public(doc: dict) -> DocumentPublic:
 
 @router.post("/document", response_model=UploadResponse)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current=Depends(get_current_user),
 ) -> UploadResponse:
@@ -117,6 +119,21 @@ async def upload_document(
         "completed_at": datetime.now(timezone.utc),
     }
     ana_ins = await analyses_col().insert_one(analysis_doc)
+
+    # Fire-and-forget post-scan report email to the logged-in user
+    user_email = current.get("email")
+    if user_email:
+        subject, plain, html = build_scan_report_email(
+            user_name=current.get("full_name") or current.get("username") or "there",
+            scan_type="document",
+            source_label=f'File: {file.filename}',
+            threat_score=float(result.get("threat_score") or 0.0),
+            threat_level=str(result.get("threat_level") or "low"),
+            summary=str(result.get("summary") or "—"),
+            keywords=result.get("keywords") or [],
+            model_used=(result.get("details") or {}).get("model"),
+        )
+        background_tasks.add_task(send_email, user_email, subject, plain, html)
 
     return UploadResponse(
         document=_doc_public(doc),

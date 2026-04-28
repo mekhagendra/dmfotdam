@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -27,8 +27,9 @@ class UserInDB(BaseModel):
     email: EmailStr
     hashed_password: str
     full_name: Optional[str] = None
-    role: str = "analyst"  # admin | analyst | viewer
-    is_active: bool = True
+    role: Literal["admin", "customer"] = "customer"
+    status: Literal["pending", "active"] = "pending"
+    is_active: bool = False
     auth_provider: str = "local"  # "local" | "google"
     google_sub: Optional[str] = None  # Google subject ID
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -42,9 +43,15 @@ class UserPublic(BaseModel):
     username: str
     email: EmailStr
     full_name: Optional[str] = None
-    role: str
+    role: Literal["admin", "customer"]
+    status: Literal["pending", "active"]
     is_active: bool
     created_at: datetime
+
+
+class UserAdminUpdate(BaseModel):
+    role: Optional[Literal["admin", "customer"]] = None
+    status: Optional[Literal["pending", "active"]] = None
 
 
 class TokenResponse(BaseModel):

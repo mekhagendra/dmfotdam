@@ -4,17 +4,22 @@ Threat-detection endpoints — analyze arbitrary text and fetch results.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.api.dependencies import get_current_user
 from app.core.database import analyses_col
+from app.core.logging import get_logger
 from app.models.analysis import AnalysisPublic, AnalyzeTextRequest
+from app.services.email_service import build_scan_report_email, send_email
+from app.services.ml_service import get_available_models
 from app.services.text_analyzer import TextAnalyzer
 
 router = APIRouter(prefix="/detection", tags=["detection"])
+logger = get_logger(__name__)
 
 
 def _to_public(doc: dict) -> AnalysisPublic:
@@ -36,14 +41,21 @@ def _to_public(doc: dict) -> AnalysisPublic:
     )
 
 
+@router.get("/models", response_model=list[dict])
+async def list_models(_: dict = Depends(get_current_user)) -> list[dict]:
+    """Return available ML models."""
+    return get_available_models()
+
+
 @router.post("/analyze-text", response_model=AnalysisPublic)
 async def analyze_text(
     payload: AnalyzeTextRequest,
+    background_tasks: BackgroundTasks,
     explain: bool = Query(False, description="Include SHAP token-level explanation"),
     current=Depends(get_current_user),
 ) -> AnalysisPublic:
     analyzer = TextAnalyzer()
-    result = await analyzer.analyze(payload.text, explain=explain)
+    result = await analyzer.analyze(payload.text, explain=explain, model=payload.model)
     now = datetime.now(timezone.utc)
 
     doc = {
@@ -63,6 +75,25 @@ async def analyze_text(
     }
     ins = await analyses_col().insert_one(doc)
     doc["_id"] = ins.inserted_id
+
+    # Fire-and-forget post-scan report email to the logged-in user
+    user_email = current.get("email")
+    if user_email:
+        snippet = (payload.text or "").strip().replace("\n", " ")
+        if len(snippet) > 80:
+            snippet = snippet[:80] + "…"
+        subject, plain, html = build_scan_report_email(
+            user_name=current.get("full_name") or current.get("username") or "there",
+            scan_type="text",
+            source_label=f'Text input: "{snippet}"' if snippet else "Text input",
+            threat_score=float(result.get("threat_score") or 0.0),
+            threat_level=str(result.get("threat_level") or "low"),
+            summary=str(result.get("summary") or "—"),
+            keywords=result.get("keywords") or [],
+            model_used=(result.get("details") or {}).get("model") or payload.model,
+        )
+        background_tasks.add_task(send_email, user_email, subject, plain, html)
+
     return _to_public(doc)
 
 

@@ -5,7 +5,7 @@ import { authService } from '../services/auth.service';
 import { GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { toast } from 'react-toastify';
 
-type Step = 'login' | 'register-form' | 'otp-verify';
+type Step = 'login' | 'register-form' | 'otp-verify' | 'forgot-password';
 
 const Login: React.FC = () => {
   const [step, setStep] = useState<Step>('login');
@@ -18,6 +18,10 @@ const Login: React.FC = () => {
 
   // OTP
   const [otp, setOtp] = useState('');
+  const [resetOtp, setResetOtp] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [resetOtpSent, setResetOtpSent] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const { user, login, googleLogin, isAuthenticated, isLoading } = useAuth();
@@ -84,6 +88,51 @@ const Login: React.FC = () => {
       setOtp('');
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetForgotPasswordState = () => {
+    setResetOtp('');
+    setResetPassword('');
+    setConfirmResetPassword('');
+    setResetOtpSent(false);
+  };
+
+  const handleSendPasswordResetOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const response = await authService.sendPasswordResetOtp({ email });
+      toast.success(response.message || 'If the account exists, a reset code has been sent');
+      setResetOtpSent(true);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Could not send reset code');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resetPassword !== confirmResetPassword) {
+      toast.error('New password and confirm password must match');
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await authService.resetPassword({
+        email,
+        otp: resetOtp,
+        new_password: resetPassword,
+      });
+      toast.success(response.message || 'Password updated successfully');
+      resetForgotPasswordState();
+      setStep('login');
+      setPassword('');
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Could not reset password');
     } finally {
       setLoading(false);
     }
@@ -156,6 +205,20 @@ const Login: React.FC = () => {
                 {loading ? 'Please wait...' : 'Sign In'}
               </button>
             </form>
+
+            <div className="mt-3 text-right">
+              <button
+                type="button"
+                onClick={() => {
+                  resetForgotPasswordState();
+                  setEmail('');
+                  setStep('forgot-password');
+                }}
+                className="text-primary-600 hover:text-primary-700 text-sm"
+              >
+                Forgot password?
+              </button>
+            </div>
 
             {/* Divider */}
             <div className="flex items-center my-5">
@@ -328,6 +391,104 @@ const Login: React.FC = () => {
               >
                 Resend code
               </button>
+            </div>
+          </>
+        )}
+
+        {step === 'forgot-password' && (
+          <>
+            <h2 className="text-xl font-semibold mb-2 text-slate-100">Reset Password</h2>
+            <p className="text-sm text-slate-500 mb-6">
+              Enter your account email. We&apos;ll send a 6-digit OTP that lets you set a new password.
+            </p>
+
+            <form onSubmit={resetOtpSent ? handleResetPassword : handleSendPasswordResetOtp} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={inputClass}
+                  required
+                />
+              </div>
+
+              {resetOtpSent && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1">OTP Code</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={resetOtp}
+                      onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      className={`${inputClass} text-center text-2xl tracking-[0.5em] font-mono`}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1">New Password</label>
+                    <input
+                      type="password"
+                      value={resetPassword}
+                      onChange={(e) => setResetPassword(e.target.value)}
+                      className={inputClass}
+                      required
+                      minLength={8}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1">Confirm New Password</label>
+                    <input
+                      type="password"
+                      value={confirmResetPassword}
+                      onChange={(e) => setConfirmResetPassword(e.target.value)}
+                      className={inputClass}
+                      required
+                      minLength={8}
+                    />
+                  </div>
+                </>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || (resetOtpSent && (resetOtp.length < 6 || resetPassword.length < 8 || confirmResetPassword.length < 8))}
+                className="w-full bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 disabled:opacity-50 font-medium"
+              >
+                {loading ? 'Please wait...' : resetOtpSent ? 'Verify OTP & Change Password' : 'Send Reset OTP'}
+              </button>
+            </form>
+
+            <div className="mt-4 flex justify-between text-sm">
+              <button
+                onClick={() => {
+                  resetForgotPasswordState();
+                  setStep('login');
+                }}
+                className="text-slate-500 hover:text-slate-300"
+              >
+                &larr; Back to sign in
+              </button>
+              {resetOtpSent && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const response = await authService.sendPasswordResetOtp({ email });
+                      toast.success(response.message || 'A new reset code has been sent');
+                    } catch (err: any) {
+                      toast.error(err.response?.data?.detail || 'Could not resend reset code');
+                    }
+                  }}
+                  className="text-primary-600 hover:text-primary-700"
+                >
+                  Resend code
+                </button>
+              )}
             </div>
           </>
         )}

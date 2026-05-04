@@ -19,8 +19,11 @@ Runs as a periodic APScheduler job (see main.py startup hook).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from bson import ObjectId
 
 from app.core.config import get_settings
 from app.core.database import (
@@ -94,9 +97,12 @@ async def _collect_source(source: Dict[str, Any]) -> List[Dict[str, Any]]:
         content = await asyncio.to_thread(_scraper.fetch_url, url)
         if not content or not content.get("text"):
             return []
+        fingerprint = hashlib.sha1(
+            f"{content.get('title', '')}\n{content.get('text', '')}".encode("utf-8")
+        ).hexdigest()[:16]
         return [
             {
-                "external_id": f"url:{url}",
+                "external_id": f"url:{url}:{fingerprint}",
                 "source_type": "url",
                 "source": url,
                 "title": content.get("title", url),
@@ -152,6 +158,8 @@ async def _process_item(item: Dict[str, Any], source: Dict[str, Any]) -> None:
 async def _raise_alert(item: Dict[str, Any], source: Dict[str, Any]) -> None:
     """Persist + broadcast an alert for a high-scoring item."""
     title = item.get("title") or (item.get("text") or "")[:120]
+    owner_id = source.get("owner_id")
+    owner_id_str = str(owner_id) if owner_id is not None else None
     alert_doc = {
         "title": title,
         "description": (item.get("text") or "")[:1000],
@@ -159,6 +167,7 @@ async def _raise_alert(item: Dict[str, Any], source: Dict[str, Any]) -> None:
         "threat_score": item.get("threat_score", 0.0),
         "source": item.get("url") or item.get("source"),
         "source_type": item.get("source_type"),
+        "owner_id": owner_id_str,
         "details": {
             "source_name": source.get("name"),
             "external_id": item.get("external_id"),
@@ -234,9 +243,16 @@ async def run_one_source(source: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def run_all_sources() -> Dict[str, Any]:
-    """Poll every active source once. Safe to call from a scheduler tick."""
-    cursor = sources_col().find({"is_active": True})
+async def run_all_sources(owner_id: ObjectId | None = None) -> Dict[str, Any]:
+    """Poll active sources once.
+
+    If owner_id is provided, only poll that user's active sources.
+    """
+    query: Dict[str, Any] = {"is_active": True}
+    if owner_id is not None:
+        query["owner_id"] = owner_id
+
+    cursor = sources_col().find(query)
     sources = [s async for s in cursor]
     if not sources:
         logger.debug("collector.no_active_sources")

@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_current_user
+from app.core.config import get_settings
 from app.core.database import collected_items_col, sources_col
 from app.services import reddit_collector
 from app.services.collector_manager import run_one_source
@@ -28,11 +29,21 @@ router = APIRouter(prefix="/reddit", tags=["reddit"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SUBREDDITS = [
-    "news", "worldnews", "CredibleDefense", "geopolitics",
-    "IntelligenceNews", "terrorism", "SecurityAnalysis",
-    "PoliticalDiscussion", "ConflictNews",
-]
+_settings = get_settings()
+
+
+def _default_subreddits() -> list[str]:
+    subs = [s.strip() for s in _settings.REDDIT_DEFAULT_SUBREDDITS.split(",") if s.strip()]
+    return subs or ["news", "worldnews", "CredibleDefense"]
+
+
+async def _owned_reddit_source_ids(current: dict) -> list[str]:
+    """Return reddit source ids owned by the authenticated user (as strings)."""
+    cursor = sources_col().find(
+        {"source_type": "reddit", "owner_id": current.get("_id")},
+        {"_id": 1},
+    )
+    return [str(d["_id"]) async for d in cursor]
 
 
 def _serialise_item(d: dict) -> dict:
@@ -93,7 +104,7 @@ async def scan_subreddits(
     req: ScanRequest, current=Depends(get_current_user)
 ) -> dict:
     """Trigger an immediate scan of one or more subreddits."""
-    subs = req.subreddits or _DEFAULT_SUBREDDITS
+    subs = req.subreddits or _default_subreddits()
 
     results = []
     total_scanned = 0
@@ -101,7 +112,7 @@ async def scan_subreddits(
     new_stored = 0
     for sub in subs:
         existing = await sources_col().find_one(
-            {"source_type": "reddit", "url": sub}
+            {"source_type": "reddit", "url": sub, "owner_id": current.get("_id")}
         )
         if existing is None:
             doc = {
@@ -112,6 +123,7 @@ async def scan_subreddits(
                 "is_active": True,
                 "check_interval": 300,
                 "last_checked": None,
+                "owner_id": current.get("_id"),
                 "created_at": datetime.now(timezone.utc),
             }
             ins = await sources_col().insert_one(doc)
@@ -124,9 +136,12 @@ async def scan_subreddits(
 
     # Count items above threshold that were just collected
     threshold = req.threat_threshold or 0.5
-    total_flagged = await collected_items_col().count_documents(
-        {"source_type": "reddit", "threat_score": {"$gte": threshold}}
-    )
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    total_flagged = await collected_items_col().count_documents({
+        "source_type": "reddit",
+        "source_id": {"$in": owned_source_ids},
+        "threat_score": {"$gte": threshold},
+    })
 
     return {
         "status": "completed",
@@ -149,7 +164,11 @@ async def list_reddit_posts(
     current=Depends(get_current_user),
 ) -> list[dict]:
     """List collected reddit items with optional filters."""
-    filt: dict = {"source_type": "reddit"}
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        return []
+
+    filt: dict = {"source_type": "reddit", "source_id": {"$in": owned_source_ids}}
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     filt["collected_at"] = {"$gte": cutoff}
     if threat_level:
@@ -172,8 +191,15 @@ async def get_reddit_post(post_id: str, current=Depends(get_current_user)) -> di
     """Fetch a single reddit item by its Mongo _id."""
     if not ObjectId.is_valid(post_id):
         raise HTTPException(status_code=404, detail="Post not found")
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        raise HTTPException(status_code=404, detail="Post not found")
     doc = await collected_items_col().find_one(
-        {"_id": ObjectId(post_id), "source_type": "reddit"}
+        {
+            "_id": ObjectId(post_id),
+            "source_type": "reddit",
+            "source_id": {"$in": owned_source_ids},
+        }
     )
     if doc is None:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -185,8 +211,15 @@ async def mark_post_reviewed(post_id: str, current=Depends(get_current_user)) ->
     """Mark a reddit item as reviewed."""
     if not ObjectId.is_valid(post_id):
         raise HTTPException(status_code=404, detail="Post not found")
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        raise HTTPException(status_code=404, detail="Post not found")
     result = await collected_items_col().update_one(
-        {"_id": ObjectId(post_id), "source_type": "reddit"},
+        {
+            "_id": ObjectId(post_id),
+            "source_type": "reddit",
+            "source_id": {"$in": owned_source_ids},
+        },
         {"$set": {"is_reviewed": True}},
     )
     if result.matched_count == 0:
@@ -200,9 +233,19 @@ async def reddit_trends(
     current=Depends(get_current_user),
 ) -> list[dict]:
     """Daily aggregated trend data for reddit items."""
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        return []
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     pipeline = [
-        {"$match": {"source_type": "reddit", "collected_at": {"$gte": cutoff}}},
+        {
+            "$match": {
+                "source_type": "reddit",
+                "source_id": {"$in": owned_source_ids},
+                "collected_at": {"$gte": cutoff},
+            }
+        },
         {
             "$group": {
                 "_id": {
@@ -240,9 +283,19 @@ async def subreddit_stats(
     current=Depends(get_current_user),
 ) -> list[dict]:
     """Per-subreddit aggregated stats."""
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        return []
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     pipeline = [
-        {"$match": {"source_type": "reddit", "collected_at": {"$gte": cutoff}}},
+        {
+            "$match": {
+                "source_type": "reddit",
+                "source_id": {"$in": owned_source_ids},
+                "collected_at": {"$gte": cutoff},
+            }
+        },
         {
             "$group": {
                 "_id": "$source",
@@ -277,7 +330,11 @@ async def search_reddit(
     req: SearchRequest, current=Depends(get_current_user)
 ) -> dict:
     """Search collected reddit items by text query."""
-    filt: dict = {"source_type": "reddit"}
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        return {"query": req.query, "total_results": 0, "posts": []}
+
+    filt: dict = {"source_type": "reddit", "source_id": {"$in": owned_source_ids}}
     if req.subreddits:
         filt["source"] = {"$in": req.subreddits}
 
@@ -321,9 +378,19 @@ async def list_flagged_reddit_items(
     current=Depends(get_current_user),
 ) -> list[dict]:
     """List reddit items that scored above a threshold."""
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if not owned_source_ids:
+        return []
+
     cursor = (
         collected_items_col()
-        .find({"source_type": "reddit", "threat_score": {"$gte": min_score}})
+        .find(
+            {
+                "source_type": "reddit",
+                "source_id": {"$in": owned_source_ids},
+                "threat_score": {"$gte": min_score},
+            }
+        )
         .sort("threat_score", -1)
         .limit(limit)
     )
@@ -348,11 +415,21 @@ async def list_flagged_reddit_items(
 async def reddit_status(current=Depends(get_current_user)) -> dict:
     """Report whether Reddit credentials are set up and stats."""
     client = reddit_collector._reddit_client()
-    total = await collected_items_col().count_documents({"source_type": "reddit"})
+    owned_source_ids = await _owned_reddit_source_ids(current)
+    if owned_source_ids:
+        total = await collected_items_col().count_documents(
+            {"source_type": "reddit", "source_id": {"$in": owned_source_ids}}
+        )
+    else:
+        total = 0
 
-    # Find the most recent last_checked across all reddit sources
+    # Find the most recent last_checked across owned reddit sources
     latest_source = await sources_col().find_one(
-        {"source_type": "reddit", "last_checked": {"$ne": None}},
+        {
+            "source_type": "reddit",
+            "owner_id": current.get("_id"),
+            "last_checked": {"$ne": None},
+        },
         sort=[("last_checked", -1)],
         projection={"last_checked": 1},
     )

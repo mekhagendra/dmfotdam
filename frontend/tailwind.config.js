@@ -13,13 +13,13 @@ module.exports = {
       },
       colors: {
         panel: {
-          DEFAULT: '#0B1120',
-          alt: '#0F1729',
-          hover: '#131D33',
+          DEFAULT: '#FFFFFF',
+          alt: '#F8FAFC',
+          hover: '#F1F5F9',
         },
         edge: {
-          DEFAULT: '#1A2744',
-          light: '#243552',
+          DEFAULT: '#E2E8F0',
+          light: '#CBD5E1',
         },
         primary: {
           50: '#eff6ff',

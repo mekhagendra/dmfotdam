@@ -1,34 +1,60 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useSources, useCreateSource, useDeleteSource, useAlerts } from '../hooks/useDetection';
+import { useSources, useCreateSource, useDeleteSource, useAlerts, useRunScanNow } from '../hooks/useDetection';
 import AlertList from '../components/AlertList';
+import { useAuth } from '../context/AuthContext';
 
 interface SourceFormData {
   name: string;
-  url: string;
-  source_type: string;
+  source_value: string;
+  source_type: 'reddit' | 'rss' | 'url';
   keywords: string;
   check_interval: number;
 }
 
+function normalizeRedditInput(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    const match = trimmed.match(/reddit\.com\/r\/([A-Za-z0-9_]+)/i);
+    return match?.[1] ?? '';
+  }
+  if (trimmed.toLowerCase().startsWith('r/')) {
+    return trimmed.slice(2).trim();
+  }
+  return trimmed;
+}
+
 const Monitoring: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const { data: sources, isLoading: sourcesLoading } = useSources();
   const { data: alerts, isLoading: alertsLoading } = useAlerts();
   const createMutation = useCreateSource();
   const deleteMutation = useDeleteSource();
+  const scanMutation = useRunScanNow();
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<SourceFormData>({
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<SourceFormData>({
     defaultValues: {
-      source_type: 'website',
+      source_type: 'url',
+      source_value: '',
       check_interval: 300,
     },
   });
 
+  const sourceType = watch('source_type');
+
   const onSubmit = async (data: SourceFormData) => {
+    if (isAdmin) return;
+
+    const normalizedValue =
+      data.source_type === 'reddit'
+        ? normalizeRedditInput(data.source_value)
+        : data.source_value.trim();
+
     await createMutation.mutateAsync({
       name: data.name,
-      url: data.url,
+      url: normalizedValue,
       source_type: data.source_type,
       keywords: data.keywords ? data.keywords.split(',').map((k) => k.trim()).filter(Boolean) : [],
       check_interval: data.check_interval,
@@ -43,15 +69,34 @@ const Monitoring: React.FC = () => {
       <div className="bg-panel rounded-lg border border-edge p-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-slate-100">Monitoring Sources</h2>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium"
-          >
-            {showForm ? 'Cancel' : '+ Add Source'}
-          </button>
+          <div className="flex items-center gap-2">
+            {!isAdmin && (
+              <button
+                onClick={() => scanMutation.mutate()}
+                disabled={scanMutation.isLoading}
+                className="bg-slate-700 text-slate-100 py-2 px-4 rounded-md hover:bg-slate-600 disabled:opacity-50 text-sm font-medium"
+              >
+                {scanMutation.isLoading ? 'Scanning...' : 'Run Scan Now'}
+              </button>
+            )}
+            {!isAdmin && (
+              <button
+                onClick={() => setShowForm(!showForm)}
+                className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium"
+              >
+                {showForm ? 'Cancel' : '+ Add Source'}
+              </button>
+            )}
+          </div>
         </div>
 
-        {showForm && (
+        {isAdmin && (
+          <div className="mb-4 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-300">
+            Admin cannot add monitoring sources from this page.
+          </div>
+        )}
+
+        {showForm && !isAdmin && (
           <form onSubmit={handleSubmit(onSubmit)} className="mb-6 p-4 bg-panel-alt rounded-lg space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -63,24 +108,53 @@ const Monitoring: React.FC = () => {
                 {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">URL</label>
-                <input
-                  {...register('url', { required: 'URL is required' })}
-                  type="url"
-                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
-                {errors.url && <p className="text-red-500 text-xs mt-1">{errors.url.message}</p>}
-              </div>
-              <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1">Type</label>
                 <select
                   {...register('source_type')}
                   className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
-                  <option value="website">Website</option>
+                  <option value="reddit">Reddit</option>
                   <option value="rss">RSS Feed</option>
-                  <option value="social_media">Social Media</option>
+                  <option value="url">Website</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  {sourceType === 'reddit' ? 'Subreddit' : sourceType === 'rss' ? 'Feed URL' : 'Website URL'}
+                </label>
+                <input
+                  {...register('source_value', {
+                    required:
+                      sourceType === 'reddit'
+                        ? 'Subreddit is required'
+                        : sourceType === 'rss'
+                        ? 'RSS feed URL is required'
+                        : 'Website URL is required',
+                    validate: (value) => {
+                      const v = value.trim();
+                      if (!v) return 'Value is required';
+                      if (sourceType === 'reddit') {
+                        const sub = normalizeRedditInput(v);
+                        return /^[A-Za-z0-9_]{2,21}$/.test(sub)
+                          ? true
+                          : 'Use subreddit name (e.g., worldnews) or a valid /r/<name> URL';
+                      }
+                      return /^https?:\/\//i.test(v)
+                        ? true
+                        : 'Please provide a valid http/https URL';
+                    },
+                  })}
+                  type={sourceType === 'reddit' ? 'text' : 'url'}
+                  placeholder={
+                    sourceType === 'reddit'
+                      ? 'e.g., worldnews or https://www.reddit.com/r/worldnews/'
+                      : sourceType === 'rss'
+                      ? 'e.g., https://example.com/feed.xml'
+                      : 'e.g., https://example.com/news'
+                  }
+                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                {errors.source_value && <p className="text-red-500 text-xs mt-1">{errors.source_value.message}</p>}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1">
@@ -151,7 +225,11 @@ const Monitoring: React.FC = () => {
             ))}
           </div>
         ) : (
-          <p className="text-slate-500">No monitoring sources configured.</p>
+          <p className="text-slate-500">
+            {isAdmin
+              ? 'No user-owned monitoring sources assigned to this admin account.'
+              : 'No monitoring sources configured yet. Add your first source after account activation.'}
+          </p>
         )}
       </div>
 

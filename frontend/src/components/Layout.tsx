@@ -39,17 +39,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const displayName = user?.username ?? 'user';
 
   return (
-    <div style={{ minHeight: '100vh', background: '#060A12' }}>
+    <div style={{ minHeight: '100vh', background: '#F8FAFC' }}>
       {/* Topbar */}
       <header
         style={{
-          background: '#080E1A',
-          borderBottom: '1px solid rgba(0,245,196,0.12)',
+          background: '#FFFFFF',
+          borderBottom: '1px solid #E2E8F0',
           padding: '0 32px',
           height: 64,
           display: 'flex',
           flexDirection: 'row',
           alignItems: 'stretch',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
         }}
       >
         {/* Logo */}
@@ -60,7 +61,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             alignItems: 'center',
             gap: 12,
             paddingRight: 28,
-            borderRight: '1px solid rgba(0,245,196,0.12)',
+            borderRight: '1px solid #E2E8F0',
             textDecoration: 'none',
           }}
         >
@@ -79,23 +80,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               style={{
                 fontSize: 16,
                 fontWeight: 700,
-                color: '#E8F0F8',
+                color: '#1E293B',
                 letterSpacing: '0.05em',
                 fontFamily: "'Space Grotesk', sans-serif",
                 lineHeight: 1.2,
               }}
             >
-              TDM
-            </span>
-            <span
-              style={{
-                fontSize: 11,
-                fontFamily: "'JetBrains Mono', monospace",
-                color: '#3D5A72',
-                lineHeight: 1.2,
-              }}
-            >
-              threat detection matrix
+              Threat Detection & Monitoring System
             </span>
           </div>
         </Link>
@@ -119,15 +110,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 className="layout-nav-link"
                 style={{
                   fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 16,
-                  color: active ? '#00F5C4' : '#3D5A72',
+                  fontSize: 13,
+                  color: active ? '#2563EB' : '#64748B',
                   letterSpacing: '0.04em',
                   padding: '0 18px',
                   display: 'flex',
                   alignItems: 'center',
-                  borderBottom: `2px solid ${active ? '#00F5C4' : 'transparent'}`,
+                  borderBottom: `2px solid ${active ? '#2563EB' : 'transparent'}`,
                   textDecoration: 'none',
                   transition: 'color 0.15s',
+                  fontWeight: active ? 600 : 400,
                 }}
               >
                 {link.label}
@@ -149,9 +141,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
-                padding: 0,
+                padding: 4,
                 display: 'flex',
                 alignItems: 'center',
+                borderRadius: 6,
               }}
               aria-label="Alerts"
             >
@@ -160,7 +153,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 height={18}
                 viewBox="0 0 18 18"
                 fill="none"
-                stroke="#3D5A72"
+                stroke="#64748B"
                 strokeWidth={1.5}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -174,19 +167,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <span
                 style={{
                   position: 'absolute',
-                  top: -4,
-                  right: -6,
+                  top: -2,
+                  right: -4,
                   minWidth: 16,
                   height: 16,
                   borderRadius: 8,
-                  background: '#FF4D6A',
-                  border: '2px solid #080E1A',
+                  background: '#EF4444',
+                  border: '2px solid #FFFFFF',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontFamily: "'JetBrains Mono', monospace",
                   fontSize: 9,
-                  fontWeight: 500,
+                  fontWeight: 600,
                   color: 'white',
                   padding: '0 3px',
                 }}
@@ -205,10 +198,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 8,
-                padding: '6px 10px',
-                border: '1px solid rgba(0,245,196,0.2)',
+                padding: '6px 12px',
+                border: '1px solid #E2E8F0',
                 borderRadius: 20,
                 cursor: 'pointer',
+                background: '#F8FAFC',
               }}
             >
               {/* Avatar */}
@@ -217,15 +211,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   width: 24,
                   height: 24,
                   borderRadius: '50%',
-                  background: '#182030',
-                  border: '1px solid rgba(61,159,255,0.3)',
+                  background: '#EFF6FF',
+                  border: '1px solid #BFDBFE',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontFamily: "'JetBrains Mono', monospace",
                   fontSize: 10,
-                  fontWeight: 500,
-                  color: '#3D9FFF',
+                  fontWeight: 600,
+                  color: '#2563EB',
                 }}
               >
                 {initials}
@@ -235,7 +229,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 style={{
                   fontFamily: "'JetBrains Mono', monospace",
                   fontSize: 11,
-                  color: '#7A9AB5',
+                  color: '#475569',
                 }}
               >
                 {displayName}
@@ -246,7 +240,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 height={10}
                 viewBox="0 0 10 10"
                 fill="none"
-                stroke="#3D5A72"
+                stroke="#94A3B8"
                 strokeWidth={1.5}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -263,11 +257,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   top: 44,
                   right: 0,
                   zIndex: 50,
-                  background: '#0C1220',
-                  border: '1px solid rgba(0,245,196,0.15)',
+                  background: '#FFFFFF',
+                  border: '1px solid #E2E8F0',
                   borderRadius: 8,
                   padding: '4px 0',
                   minWidth: 160,
+                  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)',
                 }}
               >
                 <div
@@ -280,7 +275,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     padding: '8px 14px',
                     fontFamily: "'JetBrains Mono', monospace",
                     fontSize: 11,
-                    color: '#7A9AB5',
+                    color: '#475569',
                     cursor: 'pointer',
                   }}
                 >
@@ -289,7 +284,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <div
                   style={{
                     height: 1,
-                    background: 'rgba(0,245,196,0.08)',
+                    background: '#F1F5F9',
                     margin: '4px 0',
                   }}
                 />
@@ -303,7 +298,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     padding: '8px 14px',
                     fontFamily: "'JetBrains Mono', monospace",
                     fontSize: 11,
-                    color: '#7A9AB5',
+                    color: '#475569',
                     cursor: 'pointer',
                   }}
                 >
@@ -318,7 +313,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* Main content */}
       <main
         style={{
-          background: '#060A12',
+          background: '#F8FAFC',
           minHeight: 'calc(100vh - 64px)',
           padding: '20px 32px',
         }}
@@ -329,13 +324,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* Hover styles */}
       <style>{`
         .layout-nav-link:hover {
-          color: #7A9AB5 !important;
+          color: #2563EB !important;
         }
         .layout-dropdown-item:hover {
-          background: rgba(0,245,196,0.06);
+          background: #F8FAFC;
         }
         .layout-dropdown-signout:hover {
-          color: #FF4D6A !important;
+          color: #EF4444 !important;
         }
       `}</style>
     </div>

@@ -68,6 +68,24 @@ class _SGDModelHolder:
     lock = threading.Lock()
 
 
+class _RFModelHolder:
+    pipe = None
+    error: Optional[str] = None
+    lock = threading.Lock()
+
+
+class _LinSVCModelHolder:
+    pipe = None
+    error: Optional[str] = None
+    lock = threading.Lock()
+
+
+class _DistilBERTModelHolder:
+    pipe = None
+    error: Optional[str] = None
+    lock = threading.Lock()
+
+
 def _load_pipeline():
     """Instantiate the primary HuggingFace pipeline. Called once, under a lock."""
     global ACTIVE_MODEL_NAME, ACTIVE_MODEL_F1
@@ -174,6 +192,109 @@ def get_sgd_pipeline():
     return _SGDModelHolder.pipe
 
 
+def _load_sklearn_model(filename: str, label: str):
+    """Generic loader for scikit-learn joblib models."""
+    import joblib
+    model_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "models", filename,
+    )
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"{label} model not found at {model_path}")
+    pipe = joblib.load(model_path)
+    logger.info(f"ml.{label.lower()}_model_loaded", path=model_path)
+    return pipe
+
+
+def get_rf_pipeline():
+    """Return the Random Forest classifier pipeline, loading from disk on first use."""
+    if _RFModelHolder.pipe is not None or _RFModelHolder.error is not None:
+        return _RFModelHolder.pipe
+    with _RFModelHolder.lock:
+        if _RFModelHolder.pipe is None and _RFModelHolder.error is None:
+            try:
+                _RFModelHolder.pipe = _load_sklearn_model("rf_threat_model.joblib", "RandomForest")
+            except Exception as exc:
+                _RFModelHolder.error = str(exc)
+                logger.error("ml.rf_model_load_failed", error=str(exc))
+    return _RFModelHolder.pipe
+
+
+def get_linsvc_pipeline():
+    """Return the Linear SVC classifier pipeline, loading from disk on first use."""
+    if _LinSVCModelHolder.pipe is not None or _LinSVCModelHolder.error is not None:
+        return _LinSVCModelHolder.pipe
+    with _LinSVCModelHolder.lock:
+        if _LinSVCModelHolder.pipe is None and _LinSVCModelHolder.error is None:
+            try:
+                _LinSVCModelHolder.pipe = _load_sklearn_model("linsvc_threat_model.joblib", "LinearSVC")
+            except Exception as exc:
+                _LinSVCModelHolder.error = str(exc)
+                logger.error("ml.linsvc_model_load_failed", error=str(exc))
+    return _LinSVCModelHolder.pipe
+
+
+def _load_distilbert_pipeline():
+    """Instantiate the DistilBERT HuggingFace pipeline. Called under a lock."""
+    from transformers import pipeline as hf_pipeline
+
+    logger.info("ml.loading_distilbert_model", model=_settings.HF_DISTILBERT_MODEL_NAME)
+    pipe = hf_pipeline(
+        task="text-classification",
+        model=_settings.HF_DISTILBERT_MODEL_NAME,
+        tokenizer=_settings.HF_DISTILBERT_MODEL_NAME,
+        device=0 if _settings.ML_DEVICE == "cuda" else -1,
+        top_k=None,
+        truncation=True,
+    )
+    logger.info("ml.distilbert_model_loaded", model=_settings.HF_DISTILBERT_MODEL_NAME)
+    return pipe
+
+
+def get_distilbert_pipeline():
+    """Return the DistilBERT pipeline, loading on first use."""
+    if _DistilBERTModelHolder.pipe is not None or _DistilBERTModelHolder.error is not None:
+        return _DistilBERTModelHolder.pipe
+    with _DistilBERTModelHolder.lock:
+        if _DistilBERTModelHolder.pipe is None and _DistilBERTModelHolder.error is None:
+            try:
+                _DistilBERTModelHolder.pipe = _load_distilbert_pipeline()
+            except Exception as exc:
+                _DistilBERTModelHolder.error = str(exc)
+                logger.error("ml.distilbert_model_load_failed", error=str(exc))
+    return _DistilBERTModelHolder.pipe
+
+
+def reload_sklearn_models() -> Dict[str, bool]:
+    """Force reload all sklearn models from disk (called after retraining)."""
+    results = {}
+    for holder, filename, label in [
+        (_SGDModelHolder, "sgd_threat_model.joblib", "sgd"),
+        (_RFModelHolder, "rf_threat_model.joblib", "rf"),
+        (_LinSVCModelHolder, "linsvc_threat_model.joblib", "linsvc"),
+    ]:
+        with holder.lock:
+            holder.pipe = None
+            holder.error = None
+        try:
+            model_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "data", "models", filename,
+            )
+            if os.path.exists(model_path):
+                import joblib
+                holder.pipe = joblib.load(model_path)
+                results[label] = True
+                logger.info(f"ml.{label}_model_reloaded", path=model_path)
+            else:
+                holder.error = f"File not found: {model_path}"
+                results[label] = False
+        except Exception as exc:
+            holder.error = str(exc)
+            results[label] = False
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Classification helpers
 # ---------------------------------------------------------------------------
@@ -244,108 +365,121 @@ def _extract_threat_score(label_scores: Dict[str, float]) -> float:
 
 def get_available_models() -> List[Dict[str, str]]:
     """Return a list of available ML models."""
-    models = [
-        {
-            "id": "primary",
-            "name": _settings.HF_MODEL_NAME,
-            "type": "primary",
-            "description": "Primary model (GroNLP/hateBERT - optimized for extremism detection)",
-        }
-    ]
-    if _settings.HF_FALLBACK_MODEL_NAME:
-        models.append(
-            {
-                "id": "fallback",
-                "name": _settings.HF_FALLBACK_MODEL_NAME,
-                "type": "fallback",
-                "description": "Fallback model (Twitter RoBERTa - general toxicity detection)",
-            }
-        )
-        models.append(
-            {
-                "id": "ensemble",
-                "name": "Ensemble (65% primary + 35% fallback)",
-                "type": "ensemble",
-                "description": "Weighted ensemble combining both models",
-            }
-        )
+    models: List[Dict[str, str]] = []
 
-    # Always include SGD if the model file exists
-    sgd_path = os.path.join(
+    _model_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "data", "models", "sgd_threat_model.joblib",
+        "data", "models",
     )
-    if os.path.exists(sgd_path):
-        models.append(
-            {
-                "id": "sgd",
-                "name": "SGD Classifier",
-                "type": "traditional_ml",
-                "description": "SGDClassifier with TF-IDF (fast, lightweight traditional ML)",
-            }
-        )
+
+    sklearn_models = [
+        ("rf_threat_model.joblib", "rf", "Random Forest", "Random Forest with TF-IDF (ensemble of decision trees)"),
+        ("sgd_threat_model.joblib", "sgd", "SGD Classifier", "SGD Classifier with TF-IDF (fast, lightweight)"),
+        ("linsvc_threat_model.joblib", "linsvc", "Linear SVC", "Calibrated Linear SVC with TF-IDF (high accuracy)"),
+    ]
+    for filename, model_id, model_name, desc in sklearn_models:
+        trained = os.path.exists(os.path.join(_model_dir, filename))
+        models.append({
+            "id": model_id,
+            "name": model_name,
+            "type": "traditional_ml",
+            "description": desc if trained else f"{desc} — not yet trained, run training first",
+            "available": "true" if trained else "false",
+        })
+
+    if _settings.HF_MODEL_NAME:
+        models.append({
+            "id": "hatebert",
+            "name": "HateBERT",
+            "type": "hf_bert",
+            "description": "GroNLP/hateBERT — pre-trained on Reddit hate speech for extremism detection",
+        })
+
+    if _settings.HF_DISTILBERT_MODEL_NAME:
+        models.append({
+            "id": "distilbert",
+            "name": "Distilled BERT Model",
+            "type": "hf_distilbert",
+            "description": "DistilBERT — lightweight BERT for fast sentiment/threat classification",
+        })
+
+    # Always add an "all" option to run every loaded model equally
+    models.append({
+        "id": "all",
+        "name": "All Models (Equal Weighting)",
+        "type": "all",
+        "description": "Run all available models and average scores equally",
+    })
+
     return models
 
 
-def _classify_sync(text: str, model: str = "ensemble") -> Dict[str, Any]:
+def _classify_sync(text: str, model: str = "distilbert") -> Dict[str, Any]:
     """Run the classifier(s) on text.
     
     Args:
         text: The text to classify
-        model: Which model to use: 'primary', 'fallback', 'ensemble', or 'sgd'
+        model: Which model to use: 'rf', 'sgd', 'linsvc', 'hatebert', 'distilbert', or 'all'
     """
-    # Handle SGD model separately — it doesn't require the HF pipelines
-    if model == "sgd":
-        sgd_pipe = get_sgd_pipeline()
-        if sgd_pipe is None:
-            return {
-                "method": "unavailable",
-                "model": "SGD Classifier",
-                "error": _SGDModelHolder.error or "SGD model not loaded",
-                "threat_score": 0.0,
-                "threat_level": "low",
-                "label_scores": {},
-                "top_label": None,
-                "ensemble": False,
-                "models_used": [],
-            }
-        try:
-            text_input = (text or "").strip()
-            proba = sgd_pipe.predict_proba([text_input])[0]
-            classes = list(sgd_pipe.classes_)
-            label_scores = {cls: round(float(p), 4) for cls, p in zip(classes, proba)}
-            high_score = label_scores.get("high", 0.0)
-            return {
-                "method": "sgd_pipeline",
-                "model": "SGD Classifier",
-                "threat_score": high_score,
-                "threat_level": _score_to_level(high_score),
-                "label_scores": label_scores,
-                "top_label": max(label_scores, key=label_scores.get),
-                "ensemble": False,
-                "models_used": ["SGD Classifier"],
-            }
-        except Exception as exc:
-            logger.error("ml.sgd_inference_failed", error=str(exc))
-            return {
-                "method": "unavailable",
-                "model": "SGD Classifier",
-                "error": str(exc),
-                "threat_score": 0.0,
-                "threat_level": "low",
-                "label_scores": {},
-                "top_label": None,
-                "ensemble": False,
-                "models_used": [],
-            }
+    # Handle 'all' — delegate to multi-model classification
+    if model == "all":
+        return _classify_all_models_sync(text)
 
-    # --- HF pipeline path ---
-    pipe = get_pipeline()
+    # Handle sklearn models
+    if model in ("sgd", "rf", "linsvc"):
+        return _classify_sklearn_sync(text, model)
+
+    # Handle HateBERT
+    if model == "hatebert":
+        return _classify_hf_sync(text, "hatebert")
+
+    # Handle DistilBERT (default)
+    return _classify_hf_sync(text, "distilbert")
+
+
+def _classify_sklearn_sync(text: str, model: str) -> Dict[str, Any]:
+    """Run a scikit-learn model on text and return normalized result."""
+    getter_map = {
+        "sgd": (get_sgd_pipeline, _SGDModelHolder, "SGD Classifier"),
+        "rf": (get_rf_pipeline, _RFModelHolder, "Random Forest"),
+        "linsvc": (get_linsvc_pipeline, _LinSVCModelHolder, "Linear SVC"),
+    }
+    getter, holder, label = getter_map[model]
+    pipe = getter()
     if pipe is None:
         return {
             "method": "unavailable",
-            "model": _settings.HF_MODEL_NAME,
-            "error": _ModelHolder.error or "pipeline not loaded",
+            "model": label,
+            "error": holder.error or f"{label} model not loaded",
+            "threat_score": 0.0,
+            "threat_level": "low",
+            "label_scores": {},
+            "top_label": None,
+            "ensemble": False,
+            "models_used": [],
+        }
+    try:
+        text_input = (text or "").strip()
+        proba = pipe.predict_proba([text_input])[0]
+        classes = list(pipe.classes_)
+        label_scores = {cls: round(float(p), 4) for cls, p in zip(classes, proba)}
+        high_score = label_scores.get("high", 0.0)
+        return {
+            "method": f"{model}_pipeline",
+            "model": label,
+            "threat_score": high_score,
+            "threat_level": _score_to_level(high_score),
+            "label_scores": label_scores,
+            "top_label": max(label_scores, key=label_scores.get),
+            "ensemble": False,
+            "models_used": [label],
+        }
+    except Exception as exc:
+        logger.error(f"ml.{model}_inference_failed", error=str(exc))
+        return {
+            "method": "unavailable",
+            "model": label,
+            "error": str(exc),
             "threat_score": 0.0,
             "threat_level": "low",
             "label_scores": {},
@@ -354,73 +488,177 @@ def _classify_sync(text: str, model: str = "ensemble") -> Dict[str, Any]:
             "models_used": [],
         }
 
-    chunks = _chunk(text, _settings.ML_MAX_CHARS)
-    if not chunks:
+
+def _classify_hf_sync(text: str, model: str) -> Dict[str, Any]:
+    """Run a HuggingFace model by key (hatebert, distilbert)."""
+    getter_map = {
+        "hatebert": (get_pipeline, _ModelHolder, _settings.HF_MODEL_NAME),
+        "distilbert": (get_distilbert_pipeline, _DistilBERTModelHolder, _settings.HF_DISTILBERT_MODEL_NAME),
+    }
+    getter, holder, model_name = getter_map[model]
+    pipe = getter()
+    if pipe is None:
         return {
-            "method": "hf_pipeline",
-            "model": _settings.HF_MODEL_NAME,
+            "method": "unavailable",
+            "model": model_name,
+            "error": holder.error or f"{model} not loaded",
             "threat_score": 0.0,
             "threat_level": "low",
             "label_scores": {},
             "top_label": None,
             "ensemble": False,
-            "models_used": [_settings.HF_MODEL_NAME],
+            "models_used": [],
+        }
+    try:
+        label_scores = _run_pipeline(pipe, text)
+        threat_score = _extract_threat_score(label_scores)
+        top_label = max(label_scores, key=label_scores.get) if label_scores else None
+        return {
+            "method": "hf_pipeline",
+            "model": model_name,
+            "threat_score": round(float(threat_score), 4),
+            "threat_level": _score_to_level(float(threat_score)),
+            "label_scores": label_scores,
+            "top_label": top_label,
+            "ensemble": False,
+            "models_used": [model_name],
+        }
+    except Exception as exc:
+        logger.error(f"ml.{model}_inference_failed", error=str(exc))
+        return {
+            "method": "unavailable",
+            "model": model_name,
+            "error": str(exc),
+            "threat_score": 0.0,
+            "threat_level": "low",
+            "label_scores": {},
+            "top_label": None,
+            "ensemble": False,
+            "models_used": [],
         }
 
-    # --- Primary model ---
-    primary_label_scores = _run_pipeline(pipe, text)
-    primary_threat_score = _extract_threat_score(primary_label_scores)
 
-    top_label = (
-        max(primary_label_scores, key=primary_label_scores.get)
-        if primary_label_scores
-        else None
+def _classify_all_models_sync(text: str) -> Dict[str, Any]:
+    """Run all available models and return equally weighted average threat score.
+    
+    Returns the standard result shape plus 'per_model_scores' dict.
+    """
+    scores: Dict[str, float] = {}
+    per_model: Dict[str, Dict] = {}
+
+    _model_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "models",
     )
 
-    # --- Model selection logic ---
-    fallback_pipe = get_fallback_pipeline()
-    ensemble_used = False
-    models_used = [_settings.HF_MODEL_NAME]
-    final_threat_score = primary_threat_score
-    selected_model_name = _settings.HF_MODEL_NAME
-    label_scores_to_return = primary_label_scores
+    # sklearn models
+    for model_id, filename, label in [
+        ("rf", "rf_threat_model.joblib", "Random Forest"),
+        ("sgd", "sgd_threat_model.joblib", "SGD Classifier"),
+        ("linsvc", "linsvc_threat_model.joblib", "Linear SVC"),
+    ]:
+        if os.path.exists(os.path.join(_model_dir, filename)):
+            r = _classify_sklearn_sync(text, model_id)
+            if r["method"] != "unavailable":
+                scores[label] = r["threat_score"]
+                per_model[label] = r
 
-    # If fallback requested but not available, fall back to primary
-    if model in ("fallback", "ensemble") and fallback_pipe is None:
-        logger.warning("ml.fallback_requested_but_unavailable", requested_model=model)
-        model = "primary"
+    # HateBERT
+    try:
+        hatebert_result = _classify_hf_sync(text, "hatebert")
+        if hatebert_result.get("method") != "unavailable":
+            scores["HateBERT"] = hatebert_result["threat_score"]
+            per_model["HateBERT"] = hatebert_result
+    except Exception as exc:
+        logger.warning("ml.all_hatebert_failed", error=str(exc))
 
-    if model == "fallback" and fallback_pipe is not None:
-        try:
-            fallback_label_scores = _run_pipeline(fallback_pipe, text)
-            final_threat_score = _extract_threat_score(fallback_label_scores)
-            selected_model_name = _settings.HF_FALLBACK_MODEL_NAME
-            label_scores_to_return = fallback_label_scores
-            models_used = [_settings.HF_FALLBACK_MODEL_NAME]
-        except Exception as exc:
-            logger.warning("ml.fallback_inference_failed", error=str(exc))
-            model = "primary"
+    # DistilBERT
+    try:
+        distilbert_result = _classify_hf_sync(text, "distilbert")
+        if distilbert_result.get("method") != "unavailable":
+            scores["Distilled BERT Model"] = distilbert_result["threat_score"]
+            per_model["Distilled BERT Model"] = distilbert_result
+    except Exception as exc:
+        logger.warning("ml.all_distilbert_failed", error=str(exc))
 
-    elif model == "ensemble" and fallback_pipe is not None:
-        try:
-            fallback_label_scores = _run_pipeline(fallback_pipe, text)
-            fallback_threat_score = _extract_threat_score(fallback_label_scores)
-            final_threat_score = 0.65 * primary_threat_score + 0.35 * fallback_threat_score
-            ensemble_used = True
-            models_used = [_settings.HF_MODEL_NAME, _settings.HF_FALLBACK_MODEL_NAME]
-        except Exception as exc:
-            logger.warning("ml.ensemble_inference_failed", error=str(exc))
-            model = "primary"
+    if not scores:
+        return {
+            "method": "unavailable",
+            "model": "All Models",
+            "error": "No models available",
+            "threat_score": 0.0,
+            "threat_level": "low",
+            "label_scores": {},
+            "top_label": None,
+            "ensemble": True,
+            "models_used": [],
+            "per_model_scores": {},
+        }
 
+    avg_score = sum(scores.values()) / len(scores)
     return {
-        "method": "hf_pipeline",
-        "model": selected_model_name,
-        "threat_score": round(float(final_threat_score), 4),
-        "threat_level": _score_to_level(float(final_threat_score)),
-        "label_scores": label_scores_to_return,
-        "top_label": top_label,
-        "ensemble": ensemble_used,
-        "models_used": models_used,
+        "method": "all_models",
+        "model": "All Models (Equal Weights)",
+        "threat_score": round(float(avg_score), 4),
+        "threat_level": _score_to_level(float(avg_score)),
+        "label_scores": {},
+        "top_label": None,
+        "ensemble": True,
+        "models_used": list(scores.keys()),
+        "per_model_scores": scores,
+        "per_model_details": per_model,
+    }
+
+
+def classify_with_models_sync(text: str, model_ids: List[str]) -> Dict[str, Any]:
+    """Classify text with a specific list of model IDs, average scores equally.
+    
+    Args:
+        text: Text to classify
+        model_ids: List of model IDs (e.g. ['sgd', 'rf', 'distilbert']).
+                   Pass ['all'] to run all available models.
+    
+    Returns dict with overall threat_score (equal-weight avg), per_model_scores, etc.
+    """
+    if not model_ids or model_ids == ["all"]:
+        return _classify_all_models_sync(text)
+    if len(model_ids) == 1:
+        return _classify_sync(text, model_ids[0])
+
+    scores: Dict[str, float] = {}
+    per_model: Dict[str, Dict] = {}
+    for mid in model_ids:
+        r = _classify_sync(text, mid)
+        if r.get("method") != "unavailable":
+            scores[r.get("model", mid)] = r["threat_score"]
+            per_model[r.get("model", mid)] = r
+
+    if not scores:
+        return {
+            "method": "unavailable",
+            "model": "Selected Models",
+            "error": "None of the selected models could run",
+            "threat_score": 0.0,
+            "threat_level": "low",
+            "label_scores": {},
+            "top_label": None,
+            "ensemble": True,
+            "models_used": [],
+            "per_model_scores": {},
+        }
+
+    avg_score = sum(scores.values()) / len(scores)
+    return {
+        "method": "multi_model",
+        "model": f"Selected Models ({', '.join(model_ids)})",
+        "threat_score": round(float(avg_score), 4),
+        "threat_level": _score_to_level(float(avg_score)),
+        "label_scores": {},
+        "top_label": None,
+        "ensemble": True,
+        "models_used": list(scores.keys()),
+        "per_model_scores": scores,
+        "per_model_details": per_model,
     }
 
 
@@ -496,6 +734,10 @@ class MLService:
             explanation = await asyncio.to_thread(explain_prediction, text)
             result["explanation"] = explanation
         return result
+
+    async def classify_with_models(self, text: str, model_ids: List[str]) -> Dict[str, Any]:
+        """Classify with multiple models, averaging scores equally."""
+        return await asyncio.to_thread(classify_with_models_sync, text, model_ids)
 
     def classify_sync(self, text: str, model: str = "ensemble") -> Dict[str, Any]:
         return _classify_sync(text, model)

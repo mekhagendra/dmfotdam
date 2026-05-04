@@ -118,10 +118,22 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.alerts.create_index("created_at")
     await db.alerts.create_index("is_resolved")
     await db.alerts.create_index("threat_level")
+    await db.alerts.create_index("owner_id")
 
-    await db.sources.create_index("name", unique=True)
+    # Migrate old global unique index on name -> per-owner unique names.
+    # This allows different users to have sources with the same display name
+    # (e.g. "Reddit r/worldnews") while still preventing duplicates per user.
+    indexes = await db.sources.index_information()
+    if "name_1" in indexes:
+        await db.sources.drop_index("name_1")
+    await db.sources.create_index(
+        [("owner_id", 1), ("name", 1)],
+        unique=True,
+        name="uniq_owner_source_name",
+    )
     await db.sources.create_index("source_type")
     await db.sources.create_index("is_active")
+    await db.sources.create_index("owner_id")
 
     await db.collected_items.create_index(
         [("external_id", 1), ("source_type", 1)],

@@ -25,6 +25,16 @@ export interface OTPRegisterRequest {
   full_name?: string;
 }
 
+export interface PasswordResetOTPRequest {
+  email: string;
+}
+
+export interface PasswordResetConfirmRequest {
+  email: string;
+  otp: string;
+  new_password: string;
+}
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -63,6 +73,16 @@ export const authService = {
   /** Step 2 — verify OTP and register in pending state */
   async verifyOtpAndRegister(data: OTPRegisterRequest): Promise<UserProfile> {
     const response = await api.post<UserProfile>('/auth/verify-otp-register', data);
+    return response.data;
+  },
+
+  async sendPasswordResetOtp(data: PasswordResetOTPRequest): Promise<{ message: string }> {
+    const response = await api.post<{ message: string }>('/auth/forgot-password/send-otp', data);
+    return response.data;
+  },
+
+  async resetPassword(data: PasswordResetConfirmRequest): Promise<{ message: string }> {
+    const response = await api.post<{ message: string }>('/auth/forgot-password/reset-password', data);
     return response.data;
   },
 

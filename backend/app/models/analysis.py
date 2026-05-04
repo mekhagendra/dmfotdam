@@ -10,7 +10,17 @@ from pydantic import BaseModel, Field
 
 class AnalyzeTextRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=200_000)
-    model: str = Field("ensemble", description="ML model to use: 'primary', 'fallback', or 'ensemble'")
+    model: str = Field("distilbert", description="ML model to use: 'rf', 'sgd', 'linsvc', 'distilbert', or 'all'")
+    models: Optional[List[str]] = Field(None, description="List of model IDs to use (overrides 'model' if provided)")
+
+
+class RowResult(BaseModel):
+    """Per-row analysis result for CSV/Excel documents."""
+    row: int
+    message: str
+    threat_score: float
+    threat_level: str
+    model_scores: Optional[Dict[str, float]] = None
 
 
 class AnalysisInDB(BaseModel):
@@ -26,6 +36,8 @@ class AnalysisInDB(BaseModel):
     sentiment: Optional[str] = None
     language: Optional[str] = None
     source_url: Optional[str] = None
+    row_results: Optional[List[Dict[str, Any]]] = None
+    model_scores: Optional[Dict[str, float]] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
 
@@ -43,5 +55,7 @@ class AnalysisPublic(BaseModel):
     language: Optional[str] = None
     source_url: Optional[str] = None
     explanation: Optional[Dict[str, Any]] = None
+    row_results: Optional[List[Dict[str, Any]]] = None
+    model_scores: Optional[Dict[str, float]] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

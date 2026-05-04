@@ -5,6 +5,15 @@ export interface MLModel {
   name: string;
   type: string;
   description: string;
+  available?: string; // 'true' | 'false' — false means not yet trained
+}
+
+export interface RowResult {
+  row: number;
+  message: string;
+  threat_score: number;
+  threat_level: string;
+  model_scores?: Record<string, number>;
 }
 
 export interface AnalysisResult {
@@ -20,6 +29,8 @@ export interface AnalysisResult {
   language: string | null;
   source_url?: string | null;
   explanation?: Record<string, unknown> | null;
+  row_results?: RowResult[] | null;
+  model_scores?: Record<string, number> | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -51,11 +62,11 @@ export interface DashboardMetrics {
   medium_alerts: number;
   low_alerts: number;
   category_breakdown: Record<string, number>;
-  threat_trend_24h: number;
+  threat_trend_24h: number | null;
   analyses_today: number;
   source_breakdown: Record<string, number>;
-  active_model: string;
-  model_f1: number;
+  active_model: string | null;
+  model_f1: number | null;
 }
 
 export interface AlertInfo {
@@ -84,10 +95,11 @@ export interface MonitoringSource {
 }
 
 export const detectionService = {
-  async uploadDocument(file: File): Promise<UploadResponse> {
+  async uploadDocument(file: File, models?: string[]): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await api.post<UploadResponse>('/upload/document', formData, {
+    const params = models && models.length > 0 ? `?models=${models.join(',')}` : '';
+    const response = await api.post<UploadResponse>(`/upload/document${params}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;
@@ -98,8 +110,20 @@ export const detectionService = {
     return response.data;
   },
 
-  async analyzeText(text: string, model: string = 'ensemble'): Promise<AnalysisResult> {
-    const response = await api.post<AnalysisResult>('/detection/analyze-text', { text, model });
+  async analyzeText(text: string, model: string = 'distilbert', models?: string[]): Promise<AnalysisResult> {
+    const payload: Record<string, unknown> = { text, model };
+    if (models && models.length > 0) payload.models = models;
+    const response = await api.post<AnalysisResult>('/detection/analyze-text', payload);
+    return response.data;
+  },
+
+  async trainModels(): Promise<{ job_id: string; status: string; message: string }> {
+    const response = await api.post<{ job_id: string; status: string; message: string }>('/users/train-models');
+    return response.data;
+  },
+
+  async getTrainingStatus(jobId: string): Promise<Record<string, unknown>> {
+    const response = await api.get<Record<string, unknown>>(`/users/train-status/${jobId}`);
     return response.data;
   },
 

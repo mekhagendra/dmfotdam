@@ -21,6 +21,7 @@ const Reports: React.FC = () => {
       'status',
       'threat_score',
       'threat_level',
+      'model_scores',
       'sentiment',
       'language',
       'keywords',
@@ -36,6 +37,7 @@ const Reports: React.FC = () => {
         r.status,
         r.threat_score?.toFixed(4) ?? '',
         r.threat_level ?? '',
+        r.model_scores ? JSON.stringify(r.model_scores) : '',
         r.sentiment ?? '',
         r.language ?? '',
         (r.keywords ?? []).join('; '),
@@ -155,6 +157,26 @@ const Reports: React.FC = () => {
                           </span>
                         )}
                       </div>
+
+                      {report.model_scores && Object.keys(report.model_scores).length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-500 mb-1">
+                            Model Scores
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(report.model_scores)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([modelName, score]) => (
+                                <span
+                                  key={modelName}
+                                  className="text-xs bg-cyan-500/15 text-cyan-300 px-2 py-0.5 rounded"
+                                >
+                                  {modelName}: {Number(score).toFixed(4)}
+                                </span>
+                              ))}
+                          </div>
+                        </div>
+                      )}
 
                       {keywords.length > 0 && (
                         <div>

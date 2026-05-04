@@ -39,6 +39,8 @@ const Dashboard: React.FC = () => {
 
   const recentAlerts = (alerts ?? []).slice(0, 8);
 
+  const hasNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
   // Category breakdown data for horizontal bar chart
   const categoryData = Object.entries(metrics?.category_breakdown ?? {}).map(
     ([name, value]) => ({ name, value }),
@@ -46,11 +48,15 @@ const Dashboard: React.FC = () => {
 
   // Alert distribution data for donut chart
   const alertDistribution = [
-    { name: 'Critical', value: metrics?.critical_alerts ?? 0, color: SEVERITY_COLORS.critical },
-    { name: 'High', value: metrics?.high_alerts ?? 0, color: SEVERITY_COLORS.high },
-    { name: 'Medium', value: metrics?.medium_alerts ?? 0, color: SEVERITY_COLORS.medium },
-    { name: 'Low', value: metrics?.low_alerts ?? 0, color: SEVERITY_COLORS.low },
-  ].filter((d) => d.value > 0);
+    { name: 'Critical', value: metrics?.critical_alerts, color: SEVERITY_COLORS.critical },
+    { name: 'High', value: metrics?.high_alerts, color: SEVERITY_COLORS.high },
+    { name: 'Medium', value: metrics?.medium_alerts, color: SEVERITY_COLORS.medium },
+    { name: 'Low', value: metrics?.low_alerts, color: SEVERITY_COLORS.low },
+  ].filter((d) => hasNumber(d.value) && d.value > 0) as Array<{
+    name: string;
+    value: number;
+    color: string;
+  }>;
 
   // Source breakdown
   // Source breakdown — ensure preferred order: reddit, upload, text, then rest
@@ -58,7 +64,7 @@ const Dashboard: React.FC = () => {
   const sourceEntries = Object.entries(metrics?.source_breakdown ?? {}).sort(
     ([a], [b]) => (SOURCE_ORDER[a] ?? 99) - (SOURCE_ORDER[b] ?? 99),
   );
-  const maxSourceCount = Math.max(1, ...sourceEntries.map(([, v]) => v));
+  const maxSourceCount = sourceEntries.length > 0 ? Math.max(...sourceEntries.map(([, v]) => v)) : 0;
 
   const handleAcknowledge = async (id: string) => {
     try {
@@ -78,8 +84,14 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const trendPositive = (metrics?.threat_trend_24h ?? 0) > 0;
-  const trendNeutral = (metrics?.threat_trend_24h ?? 0) === 0;
+  const trendValue = hasNumber(metrics?.threat_trend_24h) ? metrics?.threat_trend_24h : undefined;
+  const trendPositive = typeof trendValue === 'number' && trendValue > 0;
+  const trendNeutral = typeof trendValue === 'number' && trendValue === 0;
+  const totalAnalyses = hasNumber(metrics?.total_analyses) ? metrics?.total_analyses : undefined;
+  const analysesToday = hasNumber(metrics?.analyses_today) ? metrics?.analyses_today : undefined;
+  const criticalAlerts = hasNumber(metrics?.critical_alerts) ? metrics?.critical_alerts : undefined;
+  const avgThreatScore = hasNumber(metrics?.avg_threat_score) ? metrics?.avg_threat_score : undefined;
+
 
   return (
     <div className="space-y-6">
@@ -96,15 +108,15 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* KPI Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Total Analyses */}
         <div className="rounded-lg border p-4 bg-blue-500/10 text-blue-400 border-blue-500/20">
           <p className="text-sm font-medium opacity-80">Total Analyses</p>
           <p className="text-2xl font-bold mt-1">
-            {metricsLoading ? '...' : metrics?.total_analyses ?? 0}
+            {metricsLoading ? '...' : totalAnalyses ?? ''}
           </p>
-          {!metricsLoading && (metrics?.analyses_today ?? 0) > 0 && (
-            <p className="text-xs mt-1 text-blue-400">+{metrics?.analyses_today} today</p>
+          {!metricsLoading && typeof analysesToday === 'number' && analysesToday > 0 && (
+            <p className="text-xs mt-1 text-blue-400">+{analysesToday} today</p>
           )}
         </div>
 
@@ -112,7 +124,7 @@ const Dashboard: React.FC = () => {
         <div className="rounded-lg border p-4 bg-red-500/10 text-red-400 border-red-500/20">
           <p className="text-sm font-medium opacity-80">Critical Alerts</p>
           <p className="text-2xl font-bold mt-1">
-            {metricsLoading ? '...' : metrics?.critical_alerts ?? 0}
+            {metricsLoading ? '...' : criticalAlerts ?? ''}
           </p>
           {!metricsLoading && trendPositive && (
             <p className="text-xs mt-1 text-red-400">Threat rising</p>
@@ -123,30 +135,19 @@ const Dashboard: React.FC = () => {
         <div className="rounded-lg border p-4 bg-purple-500/10 text-purple-400 border-purple-500/20">
           <p className="text-sm font-medium opacity-80">Avg Threat Score</p>
           <p className="text-2xl font-bold mt-1">
-            {metricsLoading ? '...' : (metrics?.avg_threat_score ?? 0).toFixed(3)}
+            {metricsLoading ? '...' : typeof avgThreatScore === 'number' ? avgThreatScore.toFixed(3) : ''}
           </p>
-          {!metricsLoading && !trendNeutral && (
+          {!metricsLoading && typeof trendValue === 'number' && !trendNeutral && (
             <p
               className={`text-xs mt-1 ${trendPositive ? 'text-red-400' : 'text-green-400'}`}
             >
               {trendPositive ? '\u25B2' : '\u25BC'}{' '}
-              {Math.abs(metrics?.threat_trend_24h ?? 0).toFixed(4)} (24h)
+              {Math.abs(trendValue).toFixed(4)} (24h)
             </p>
           )}
         </div>
 
-        {/* Active Model */}
-        <div className="rounded-lg border p-4 bg-green-500/10 text-green-400 border-green-500/20">
-          <p className="text-sm font-medium opacity-80">Active Model</p>
-          <p className="text-lg font-bold mt-1 truncate" title={metrics?.active_model}>
-            {metricsLoading ? '...' : metrics?.active_model ?? 'N/A'}
-          </p>
-          {!metricsLoading && (metrics?.model_f1 ?? 0) > 0 && (
-            <span className="inline-block mt-1 text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">
-              F1: {((metrics?.model_f1 ?? 0) * 100).toFixed(1)}%
-            </span>
-          )}
-        </div>
+
       </div>
 
       {/* Charts row */}
@@ -279,7 +280,7 @@ const Dashboard: React.FC = () => {
               <div className="w-full bg-slate-700 rounded-full h-1.5 mt-2">
                 <div
                   className="bg-blue-500 h-1.5 rounded-full"
-                  style={{ width: `${Math.round((count / maxSourceCount) * 100)}%` }}
+                  style={{ width: `${maxSourceCount > 0 ? Math.round((count / maxSourceCount) * 100) : 0}%` }}
                 />
               </div>
             </div>

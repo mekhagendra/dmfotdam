@@ -29,7 +29,7 @@ export function useSources() {
 export function useUploadDocument() {
   const queryClient = useQueryClient();
   return useMutation(
-    (file: File) => detectionService.uploadDocument(file),
+    ({ file, models }: { file: File; models?: string[] }) => detectionService.uploadDocument(file, models),
     {
       onSuccess: () => {
         toast.success('Document uploaded and analysis started');
@@ -47,8 +47,8 @@ export function useUploadDocument() {
 export function useAnalyzeText() {
   const queryClient = useQueryClient();
   return useMutation(
-    ({ text, model }: { text: string; model?: string }) => 
-      detectionService.analyzeText(text, model || 'ensemble'),
+    ({ text, model, models }: { text: string; model?: string; models?: string[] }) => 
+      detectionService.analyzeText(text, model || 'distilbert', models),
     {
       onSuccess: () => {
         toast.success('Text analysis completed');
@@ -64,6 +64,34 @@ export function useAnalyzeText() {
 
 export function useAvailableModels() {
   return useQuery('availableModels', detectionService.getAvailableModels);
+}
+
+export function useTrainModels() {
+  const queryClient = useQueryClient();
+  return useMutation(
+    () => detectionService.trainModels(),
+    {
+      onSuccess: () => {
+        toast.info('Model training started');
+        queryClient.invalidateQueries('availableModels');
+      },
+      onError: () => {
+        toast.error('Failed to start model training');
+      },
+    }
+  );
+}
+
+export function useTrainingStatus(jobId: string | null) {
+  return useQuery(
+    ['trainingStatus', jobId],
+    () => detectionService.getTrainingStatus(jobId!),
+    {
+      enabled: !!jobId,
+      refetchInterval: (data: any) =>
+        data && (data.status === 'completed' || data.status === 'failed') ? false : 3000,
+    }
+  );
 }
 
 export function useCreateSource() {
@@ -104,4 +132,20 @@ export function useDeleteSource() {
       },
     }
   );
+}
+
+export function useRunScanNow() {
+  const queryClient = useQueryClient();
+  return useMutation(() => detectionService.runScanNow(), {
+    onSuccess: (data: any) => {
+      const polled = typeof data?.sources_polled === 'number' ? data.sources_polled : null;
+      toast.success(polled !== null ? `Scan completed for ${polled} source(s)` : 'Scan completed');
+      queryClient.invalidateQueries('alerts');
+      queryClient.invalidateQueries('dashboardMetrics');
+      queryClient.invalidateQueries('sources');
+    },
+    onError: () => {
+      toast.error('Failed to run scan');
+    },
+  });
 }

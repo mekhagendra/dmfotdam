@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # models. Falls back to RoBERTa-hate if HateBERT fails to load.
     HF_MODEL_NAME: str = "GroNLP/hateBERT"
     HF_FALLBACK_MODEL_NAME: str = "cardiffnlp/twitter-roberta-base-hate"
+    # DistilBERT variant — lighter BERT distilled for fast inference.
+    # Replace with a hate-speech fine-tuned distilbert if available.
+    HF_DISTILBERT_MODEL_NAME: str = "distilbert-base-uncased-finetuned-sst-2-english"
     HF_MODEL_CACHE: str = "data/models"
     ML_DEVICE: str = "cpu"              # "cpu" or "cuda"
     ML_MAX_CHARS: int = 4000            # per-chunk cap sent to the model

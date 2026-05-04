@@ -284,10 +284,36 @@ def main():
     plot_confusion_matrix(y_test, y_pred, labels, title=f"Confusion Matrix -- {best_name}")
     plot_classification_report_heatmap(y_test, y_pred, labels)
 
-    # ── Step 5: Save the best model ────────────────────────────────
+    # ── Step 5: Save ALL individual models ─────────────────────────
+    MODEL_FILE_MAP = {
+        "SGD (Modified Huber)": "sgd_threat_model.joblib",
+        "Logistic Regression": "logreg_threat_model.joblib",
+        "Random Forest": "rf_threat_model.joblib",
+        "Linear SVC": "linsvc_threat_model.joblib",
+    }
+
+    all_model_summaries = {}
+    for clf_name, clf in classifiers.items():
+        clf_pipe = Pipeline([("tfidf", make_tfidf()), ("clf", clf)])
+        clf_pipe.fit(X_train, y_train)
+        clf_pred = clf_pipe.predict(X_test)
+        clf_f1 = f1_score(y_test, clf_pred, average="weighted")
+        clf_acc = accuracy_score(y_test, clf_pred)
+        file_name = MODEL_FILE_MAP.get(clf_name, clf_name.lower().replace(" ", "_") + "_threat_model.joblib")
+        save_path = os.path.join(MODEL_DIR, file_name)
+        joblib.dump(clf_pipe, save_path)
+        all_model_summaries[clf_name] = {
+            "file": file_name,
+            "test_f1_weighted": round(clf_f1, 4),
+            "test_accuracy": round(clf_acc, 4),
+            "cv_f1_mean": round(results[clf_name]["f1_mean"], 4),
+        }
+        print(f"  Saved {clf_name} → {save_path}  (F1={clf_f1:.4f})")
+
+    # Also save best model as the generic threat_level_model.joblib
     out_path = os.path.join(MODEL_DIR, "threat_level_model.joblib")
     joblib.dump(final_pipe, out_path)
-    print(f"\nModel saved: {out_path}")
+    print(f"\nBest model ({best_name}) also saved as: {out_path}")
 
     # ── Step 6: Save comparison summary as JSON ────────────────────
     summary = {
@@ -296,15 +322,17 @@ def main():
             name: {k: round(v, 4) for k, v in res.items()}
             for name, res in results.items()
         },
+        "all_models": all_model_summaries,
         "test_accuracy": round(test_accuracy, 4),
         "test_f1_weighted": round(test_f1, 4),
+        "trained_at": __import__("datetime").datetime.utcnow().isoformat(),
     }
     summary_path = os.path.join(MODEL_DIR, "training_summary.json")
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"Summary saved: {summary_path}")
 
-    print(f"\nDone. Best model ({best_name}) saved to {MODEL_DIR}")
+    print(f"\nDone. All models saved to {MODEL_DIR}")
 
 
 if __name__ == "__main__":

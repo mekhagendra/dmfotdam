@@ -11,27 +11,28 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #060A12;
-  color: #E8F0F8;
+  background-color: #F8FAFC;
+  color: #1E293B;
 }
 
-/* Recharts dark-theme overrides */
-.recharts-cartesian-grid line { stroke: #1A2744; }
-.recharts-text { fill: #6B8299; }
+/* Recharts light-theme overrides */
+.recharts-cartesian-grid line { stroke: #E2E8F0; }
+.recharts-text { fill: #475569; }
 .recharts-tooltip-wrapper .recharts-default-tooltip {
-  background-color: #0F1729 !important;
-  border: 1px solid #1A2744 !important;
+  background-color: #FFFFFF !important;
+  border: 1px solid #E2E8F0 !important;
   border-radius: 8px !important;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.08) !important;
 }
-.recharts-default-tooltip .recharts-tooltip-label { color: #E8F0F8 !important; }
-.recharts-default-tooltip .recharts-tooltip-item { color: #8BA3B8 !important; }
-.recharts-legend-item-text { color: #8BA3B8 !important; }
+.recharts-default-tooltip .recharts-tooltip-label { color: #1E293B !important; }
+.recharts-default-tooltip .recharts-tooltip-item { color: #475569 !important; }
+.recharts-legend-item-text { color: #475569 !important; }
 
-/* Dark scrollbar */
+/* Light scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0B1120; }
-::-webkit-scrollbar-thumb { background: #1A2744; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #243552; }
+::-webkit-scrollbar-track { background: #F1F5F9; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
 
-/* Form elements inherit dark scheme */
-input, select, textarea { color-scheme: dark; }
+/* Form elements inherit light scheme */
+input, select, textarea { color-scheme: light; }

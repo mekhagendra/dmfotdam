@@ -78,6 +78,18 @@ class OTPVerifyAndRegister(BaseModel):
     full_name: Optional[str] = Field(None, max_length=100)
 
 
+class PasswordResetOTPRequest(BaseModel):
+    """Request body for sending a password-reset OTP."""
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    """Verify OTP and set a new password for an existing user."""
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=8, max_length=200)
+
+
 class GoogleLoginRequest(BaseModel):
     """Frontend sends the Google credential (ID-token string)."""
     credential: str

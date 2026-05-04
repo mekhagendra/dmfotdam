@@ -12,6 +12,9 @@ import asyncio
 import hashlib
 from typing import Any, Dict, Optional
 
+import certifi
+import requests
+
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,7 +40,15 @@ def _fetch_sync(
         return []
 
     try:
-        parsed = feedparser.parse(feed_url)
+        # Fetch over HTTPS with explicit CA bundle to avoid local SSL trust issues.
+        resp = requests.get(
+            feed_url,
+            timeout=20,
+            headers={"User-Agent": "TDM-Research-Bot/1.0"},
+            verify=certifi.where(),
+        )
+        resp.raise_for_status()
+        parsed = feedparser.parse(resp.content)
     except Exception as exc:
         logger.error("rss.parse_failed", url=feed_url, error=str(exc))
         return []

@@ -25,6 +25,8 @@ from app.models.user import (
     GoogleLoginRequest,
     OTPRequest,
     OTPVerifyAndRegister,
+    PasswordResetConfirmRequest,
+    PasswordResetOTPRequest,
     UserLogin,
     UserPublic,
     TokenResponse,
@@ -44,6 +46,10 @@ def _otp_col():
 
 def _generate_otp(length: int = 6) -> str:
     return "".join(random.choices(string.digits, k=length))
+
+
+def _otp_lookup(email: str, purpose: str) -> dict:
+    return {"email": email, "purpose": purpose}
 
 
 async def _send_email(to: str, subject: str, body: str) -> None:
@@ -79,10 +85,11 @@ async def send_otp(payload: OTPRequest) -> dict:
 
     # Upsert — one pending OTP per email at a time
     await _otp_col().update_one(
-        {"email": payload.email},
+        _otp_lookup(payload.email, "register"),
         {
             "$set": {
                 "otp": otp,
+                "purpose": "register",
                 "username": payload.username,
                 "expires_at": expires_at,
                 "verified": False,
@@ -107,13 +114,13 @@ async def send_otp(payload: OTPRequest) -> dict:
 @router.post("/verify-otp-register", response_model=UserPublic, status_code=201)
 async def verify_otp_register(payload: OTPVerifyAndRegister) -> UserPublic:
     """Verify the OTP, then create the user in pending state."""
-    record = await _otp_col().find_one({"email": payload.email})
+    record = await _otp_col().find_one(_otp_lookup(payload.email, "register"))
     if not record:
         raise HTTPException(status_code=400, detail="No OTP found for this email — request one first")
 
     # Check expiry
     if datetime.now(timezone.utc).timestamp() > record["expires_at"]:
-        await _otp_col().delete_one({"email": payload.email})
+        await _otp_col().delete_one(_otp_lookup(payload.email, "register"))
         raise HTTPException(status_code=400, detail="OTP expired — request a new one")
 
     # Check code
@@ -144,9 +151,80 @@ async def verify_otp_register(payload: OTPVerifyAndRegister) -> UserPublic:
     doc["_id"] = result.inserted_id
 
     # Clean up OTP
-    await _otp_col().delete_one({"email": payload.email})
+    await _otp_col().delete_one(_otp_lookup(payload.email, "register"))
 
     return UserPublic(**user_to_public(doc))
+
+
+@router.post("/forgot-password/send-otp", status_code=200)
+async def send_password_reset_otp(payload: PasswordResetOTPRequest) -> dict:
+    """Generate a password-reset OTP and email it when the account exists."""
+    user = await users_col().find_one({"email": payload.email})
+    if not user:
+        return {"message": "If an account exists for that email, an OTP has been sent"}
+
+    otp = _generate_otp()
+    expires_at = datetime.now(timezone.utc).timestamp() + (
+        _settings.OTP_EXPIRE_MINUTES * 60
+    )
+
+    await _otp_col().update_one(
+        _otp_lookup(payload.email, "password_reset"),
+        {
+            "$set": {
+                "otp": otp,
+                "purpose": "password_reset",
+                "expires_at": expires_at,
+                "verified": False,
+                "created_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+
+    subject = "TDM — Your password reset code"
+    body = (
+        f"Hello {user.get('full_name') or user.get('username') or 'user'},\n\n"
+        f"Your one-time password reset code is: {otp}\n\n"
+        f"This code expires in {_settings.OTP_EXPIRE_MINUTES} minutes.\n"
+        f"If you did not request a password reset, you can ignore this email.\n"
+    )
+    await _send_email(payload.email, subject, body)
+
+    return {"message": "If an account exists for that email, an OTP has been sent"}
+
+
+@router.post("/forgot-password/reset-password", status_code=200)
+async def reset_password(payload: PasswordResetConfirmRequest) -> dict:
+    """Verify a password-reset OTP and update the stored password hash."""
+    record = await _otp_col().find_one(_otp_lookup(payload.email, "password_reset"))
+    if not record:
+        raise HTTPException(status_code=400, detail="No password reset request found for this email")
+
+    if datetime.now(timezone.utc).timestamp() > record["expires_at"]:
+        await _otp_col().delete_one(_otp_lookup(payload.email, "password_reset"))
+        raise HTTPException(status_code=400, detail="OTP expired — request a new one")
+
+    if record["otp"] != payload.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    user = await users_col().find_one({"email": payload.email})
+    if not user:
+        await _otp_col().delete_one(_otp_lookup(payload.email, "password_reset"))
+        raise HTTPException(status_code=400, detail="Account not found")
+
+    await users_col().update_one(
+        {"_id": user["_id"]},
+        {
+            "$set": {
+                "hashed_password": get_password_hash(payload.new_password),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    await _otp_col().delete_one(_otp_lookup(payload.email, "password_reset"))
+
+    return {"message": "Password updated successfully. You can sign in now."}
 
 
 # --------------- Google OAuth ---------------

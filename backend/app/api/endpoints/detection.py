@@ -36,6 +36,8 @@ def _to_public(doc: dict) -> AnalysisPublic:
         language=doc.get("language"),
         source_url=doc.get("source_url"),
         explanation=doc.get("explanation"),
+        row_results=doc.get("row_results"),
+        model_scores=doc.get("model_scores"),
         created_at=doc.get("created_at"),
         completed_at=doc.get("completed_at"),
     )
@@ -55,7 +57,11 @@ async def analyze_text(
     current=Depends(get_current_user),
 ) -> AnalysisPublic:
     analyzer = TextAnalyzer()
-    result = await analyzer.analyze(payload.text, explain=explain, model=payload.model)
+    # Use models list if provided, otherwise fall back to single model
+    if payload.models and len(payload.models) > 0:
+        result = await analyzer.analyze(payload.text, models=payload.models)
+    else:
+        result = await analyzer.analyze(payload.text, explain=explain, model=payload.model)
     now = datetime.now(timezone.utc)
 
     doc = {
@@ -70,6 +76,7 @@ async def analyze_text(
         "sentiment": result.get("sentiment"),
         "language": result.get("language"),
         "explanation": result.get("explanation"),
+        "model_scores": result.get("model_scores"),
         "created_at": now,
         "completed_at": now,
     }
@@ -82,6 +89,7 @@ async def analyze_text(
         snippet = (payload.text or "").strip().replace("\n", " ")
         if len(snippet) > 80:
             snippet = snippet[:80] + "…"
+        models_label = ",".join(payload.models) if payload.models else payload.model
         subject, plain, html = build_scan_report_email(
             user_name=current.get("full_name") or current.get("username") or "there",
             scan_type="text",
@@ -90,7 +98,7 @@ async def analyze_text(
             threat_level=str(result.get("threat_level") or "low"),
             summary=str(result.get("summary") or "—"),
             keywords=result.get("keywords") or [],
-            model_used=(result.get("details") or {}).get("model") or payload.model,
+            model_used=models_label,
         )
         background_tasks.add_task(send_email, user_email, subject, plain, html)
 

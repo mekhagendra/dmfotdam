@@ -608,7 +608,9 @@ async def source_daily_trends(days: int = 30, current=Depends(get_current_user))
 @router.post("/scan/run")
 async def run_scan_now(current=Depends(get_current_user)) -> dict:
     """Trigger an immediate poll of the current user's active sources."""
-    return await run_all_sources(owner_id=current.get("_id"))
+    result = await run_all_sources(owner_id=current.get("_id"))
+    result["scanned_at"] = datetime.now(timezone.utc).isoformat()
+    return result
 
 
 @router.delete("/data/reset")

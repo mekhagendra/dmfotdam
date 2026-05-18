@@ -151,11 +151,20 @@ export function useRunScanNow() {
   return useMutation(() => detectionService.runScanNow(), {
     onSuccess: (data: any) => {
       const polled = typeof data?.sources_polled === 'number' ? data.sources_polled : null;
-      toast.success(polled !== null ? `Scan completed for ${polled} source(s)` : 'Scan completed');
+      const newItems = typeof data?.results === 'object'
+        ? (data.results as any[]).reduce((s: number, r: any) => s + (typeof r.new === 'number' ? r.new : 0), 0)
+        : null;
+      const msg = polled !== null
+        ? `Scan complete — ${polled} source(s) polled, ${newItems ?? 0} new item(s)`
+        : 'Scan completed';
+      toast.success(msg);
+      // Invalidate then immediately refetch so the UI updates right away.
       queryClient.invalidateQueries('alerts');
       queryClient.invalidateQueries('collectedItems');
       queryClient.invalidateQueries('dashboardMetrics');
       queryClient.invalidateQueries('sources');
+      queryClient.refetchQueries('alerts');
+      queryClient.refetchQueries('collectedItems');
     },
     onError: () => {
       toast.error('Failed to run scan');

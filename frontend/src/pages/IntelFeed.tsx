@@ -84,19 +84,30 @@ const IntelFeed: React.FC = () => {
       isResolved: alert.is_resolved,
     }));
 
-    const itemRows = filteredItems.map((item) => ({
-      id: `item-${item.id}`,
-      kind: 'scan' as const,
-      title: item.title,
-      text: item.text || '',
-      sourceName: item.source_name,
-      sourceType: item.source_type,
-      threatLevel: item.threat_level,
-      threatScore: item.threat_score,
-      when: item.collected_at,
-      url: item.url,
-      isResolved: false,
-    }));
+    // Build a dedup key set from alerts: every high-threat collected item also
+    // generates an alert, so without this check each item appears twice.
+    const alertKeys = new Set(
+      alertRows.map((r) => `${r.title}::${r.sourceName}`)
+    );
+
+    const itemRows = filteredItems
+      .filter((item) => {
+        const sourceName = item.source_name ?? '';
+        return !alertKeys.has(`${item.title}::${sourceName}`);
+      })
+      .map((item) => ({
+        id: `item-${item.id}`,
+        kind: 'scan' as const,
+        title: item.title,
+        text: item.text || '',
+        sourceName: item.source_name,
+        sourceType: item.source_type,
+        threatLevel: item.threat_level,
+        threatScore: item.threat_score,
+        when: item.collected_at,
+        url: item.url,
+        isResolved: false,
+      }));
 
     return [...alertRows, ...itemRows].sort(
       (a, b) => Date.parse(b.when) - Date.parse(a.when),
@@ -105,7 +116,7 @@ const IntelFeed: React.FC = () => {
 
   const scanSummary = useMemo(() => {
     const data = runScanMutation.data as
-      | { sources_polled?: number; results?: Array<{ source?: string; fetched?: number; new?: number; error?: string }> }
+      | { sources_polled?: number; scanned_at?: string; results?: Array<{ source?: string; fetched?: number; new?: number; error?: string }> }
       | undefined;
     if (!data) return null;
 
@@ -119,6 +130,8 @@ const IntelFeed: React.FC = () => {
       fetchedTotal,
       newTotal,
       failed,
+      scannedAt: data.scanned_at ?? null,
+      perSource: results,
     };
   }, [runScanMutation.data]);
 
@@ -202,23 +215,53 @@ const IntelFeed: React.FC = () => {
       )}
 
       {scanSummary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-white border border-slate-300 rounded-lg p-3">
-            <p className="text-xs text-slate-600">Sources polled</p>
-            <p className="text-xl font-semibold text-slate-900">{scanSummary.polled}</p>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm font-semibold text-emerald-800">
+              Last scan completed{scanSummary.scannedAt ? ` — ${formatDateTime(scanSummary.scannedAt)}` : ''}
+            </p>
+            {scanSummary.newTotal === 0 && (
+              <span className="text-xs text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                No new items (all content already indexed)
+              </span>
+            )}
           </div>
-          <div className="bg-white border border-slate-300 rounded-lg p-3">
-            <p className="text-xs text-slate-600">Fetched items</p>
-            <p className="text-xl font-semibold text-slate-900">{scanSummary.fetchedTotal}</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-white border border-emerald-200 rounded-lg p-3">
+              <p className="text-xs text-slate-600">Sources polled</p>
+              <p className="text-xl font-semibold text-slate-900">{scanSummary.polled}</p>
+            </div>
+            <div className="bg-white border border-emerald-200 rounded-lg p-3">
+              <p className="text-xs text-slate-600">Items fetched</p>
+              <p className="text-xl font-semibold text-slate-900">{scanSummary.fetchedTotal}</p>
+            </div>
+            <div className="bg-white border border-emerald-200 rounded-lg p-3">
+              <p className="text-xs text-slate-600">New items stored</p>
+              <p className={`text-xl font-semibold ${scanSummary.newTotal > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>
+                {scanSummary.newTotal}
+              </p>
+            </div>
+            <div className="bg-white border border-emerald-200 rounded-lg p-3">
+              <p className="text-xs text-slate-600">Failed sources</p>
+              <p className={`text-xl font-semibold ${scanSummary.failed > 0 ? 'text-red-600' : 'text-slate-500'}`}>
+                {scanSummary.failed}
+              </p>
+            </div>
           </div>
-          <div className="bg-white border border-slate-300 rounded-lg p-3">
-            <p className="text-xs text-slate-600">New items</p>
-            <p className="text-xl font-semibold text-slate-900">{scanSummary.newTotal}</p>
-          </div>
-          <div className="bg-white border border-slate-300 rounded-lg p-3">
-            <p className="text-xs text-slate-600">Failed sources</p>
-            <p className="text-xl font-semibold text-slate-900">{scanSummary.failed}</p>
-          </div>
+          {scanSummary.perSource.length > 0 && (
+            <div className="text-xs text-slate-600 space-y-1">
+              {scanSummary.perSource.map((r, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${r.error ? 'bg-red-400' : 'bg-emerald-400'}`} />
+                  <span className="font-medium">{r.source ?? `Source ${i + 1}`}:</span>
+                  {r.error
+                    ? <span className="text-red-600">{r.error}</span>
+                    : <span>{r.fetched ?? 0} fetched, <strong>{r.new ?? 0} new</strong></span>
+                  }
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

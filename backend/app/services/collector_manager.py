@@ -19,7 +19,6 @@ Runs as a periodic APScheduler job (see main.py startup hook).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -87,27 +86,14 @@ async def _collect_source(source: Dict[str, Any]) -> List[Dict[str, Any]]:
     stype = source.get("source_type")
     url = source.get("url", "")
     if stype == "rss":
-        return await rss_collector.fetch_feed(url, source_type="rss", limit=30)
+        return await rss_collector.fetch_feed(url, source_type="rss", limit=50)
     if stype == "telegram":
         return await telegram_collector.fetch_channel(url, limit=30)
     if stype == "url":
-        # One-shot scrape of a page; treat as a single item.
-        content = await asyncio.to_thread(_scraper.fetch_url, url)
-        if not content or not content.get("text"):
-            return []
-        fingerprint = hashlib.sha1(
-            f"{content.get('title', '')}\n{content.get('text', '')}".encode("utf-8")
-        ).hexdigest()[:16]
-        return [
-            {
-                "external_id": f"url:{url}:{fingerprint}",
-                "source_type": "url",
-                "source": url,
-                "title": content.get("title", url),
-                "text": content["text"],
-                "url": url,
-            }
-        ]
+        # Extract individual article links from the page so each article is
+        # a separate item deduped by its own URL.  This replaces the old
+        # whole-page-as-one-item approach that gave erratic dedup results.
+        return await asyncio.to_thread(_scraper.extract_articles, url, 25)
     logger.warning("collector.unknown_source_type", source_type=stype)
     return []
 

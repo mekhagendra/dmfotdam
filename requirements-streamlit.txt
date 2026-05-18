@@ -1,0 +1,18 @@
+# Streamlit dependencies for Threat Detection & Monitoring System
+# Deploy to streamlit.app with: streamlit run streamlit_app.py
+
+streamlit==1.32.0
+pandas==2.2.1
+numpy==1.24.3
+scikit-learn==1.4.1
+joblib==1.3.2
+
+# File handling
+PyPDF2==3.0.1
+python-docx==1.1.0
+openpyxl==3.1.2
+
+# ML/NLP (optional - comment out if using only sklearn models)
+# torch==2.2.2
+# transformers==4.39.3
+# sentence-transformers==3.0.0

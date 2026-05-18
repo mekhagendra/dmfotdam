@@ -1,0 +1,66 @@
+{
+  "best_model": "Linear SVC",
+  "cv_results": {
+    "SGD (Modified Huber)": {
+      "accuracy_mean": 0.9983,
+      "accuracy_std": 0.0006,
+      "f1_mean": 0.9983,
+      "f1_std": 0.0006,
+      "precision_mean": 0.9983,
+      "recall_mean": 0.9983
+    },
+    "Logistic Regression": {
+      "accuracy_mean": 0.9969,
+      "accuracy_std": 0.0007,
+      "f1_mean": 0.9969,
+      "f1_std": 0.0007,
+      "precision_mean": 0.9969,
+      "recall_mean": 0.9969
+    },
+    "Random Forest": {
+      "accuracy_mean": 0.997,
+      "accuracy_std": 0.001,
+      "f1_mean": 0.997,
+      "f1_std": 0.001,
+      "precision_mean": 0.997,
+      "recall_mean": 0.997
+    },
+    "Linear SVC": {
+      "accuracy_mean": 0.9983,
+      "accuracy_std": 0.0009,
+      "f1_mean": 0.9983,
+      "f1_std": 0.0009,
+      "precision_mean": 0.9983,
+      "recall_mean": 0.9983
+    }
+  },
+  "all_models": {
+    "SGD (Modified Huber)": {
+      "file": "sgd_threat_model.joblib",
+      "test_f1_weighted": 0.9984,
+      "test_accuracy": 0.9984,
+      "cv_f1_mean": 0.9983
+    },
+    "Logistic Regression": {
+      "file": "logreg_threat_model.joblib",
+      "test_f1_weighted": 0.9969,
+      "test_accuracy": 0.9969,
+      "cv_f1_mean": 0.9969
+    },
+    "Random Forest": {
+      "file": "rf_threat_model.joblib",
+      "test_f1_weighted": 0.9953,
+      "test_accuracy": 0.9953,
+      "cv_f1_mean": 0.997
+    },
+    "Linear SVC": {
+      "file": "linsvc_threat_model.joblib",
+      "test_f1_weighted": 0.9984,
+      "test_accuracy": 0.9984,
+      "cv_f1_mean": 0.9983
+    }
+  },
+  "test_accuracy": 0.9984,
+  "test_f1_weighted": 0.9984,
+  "trained_at": "2026-05-04T14:09:07.134115"
+}

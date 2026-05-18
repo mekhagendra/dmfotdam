@@ -49,8 +49,8 @@ logs/
 !/backend/data/uploads/.gitkeep
 /backend/data/datasets/*
 !/backend/data/datasets/.gitkeep
-/backend/data/models/*
-!/backend/data/models/.gitkeep
+# IMPORTANT: DO NOT exclude /backend/data/models/ — trained models must be tracked for Streamlit deployment
+/backend/data/models/bert_threat_model/*
 
 # Node.js
 node_modules/
@@ -80,9 +80,8 @@ coverage/
 .coverage
 .pytest_cache/
 
-# ML/AI models (large files)
+# ML/AI models (large files — but keep .joblib in /backend/data/models/)
 *.pkl
-*.joblib
 *.h5
 *.model
 

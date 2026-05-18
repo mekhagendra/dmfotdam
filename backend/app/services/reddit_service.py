@@ -1,11 +1,6 @@
 """
-DEPRECATED — kept only for import compatibility.
+DEPRECATED — Reddit service removed as of static Reddit sources removal.
 
-The real Reddit pipeline now lives in:
-    * app/services/reddit_collector.py   (PRAW fetching)
-    * app/services/collector_manager.py  (orchestration + MongoDB persistence)
+Users can still add Reddit subreddits as dynamic sources via the /monitoring/sources API
+using the generic source type system.
 """
-
-from app.services import reddit_collector  # noqa: F401
-
-fetch_subreddit = reddit_collector.fetch_subreddit

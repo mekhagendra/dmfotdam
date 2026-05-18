@@ -3,6 +3,14 @@ import { AlertInfo } from '../services/detection.service';
 import ThreatBadge from './ThreatBadge';
 import { formatDateTime } from '../utils/formatDate';
 
+function normalizeThreatScore(raw: number): number {
+  if (!Number.isFinite(raw)) return 0;
+  if (raw > 1 && raw <= 100) return Number((raw / 100).toFixed(4));
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return Number(raw.toFixed(4));
+}
+
 interface AlertListProps {
   alerts: AlertInfo[];
   loading: boolean;
@@ -19,7 +27,9 @@ const AlertList: React.FC<AlertListProps> = ({ alerts, loading }) => {
 
   return (
     <div className="space-y-3 max-h-96 overflow-y-auto">
-      {alerts.map((alert) => (
+      {alerts.map((alert) => {
+        const normalizedScore = normalizeThreatScore(alert.threat_score);
+        return (
         <div
           key={alert.id}
           className={`p-3 border rounded-lg ${
@@ -40,11 +50,12 @@ const AlertList: React.FC<AlertListProps> = ({ alerts, loading }) => {
           )}
           <div className="flex gap-3 mt-1 text-xs text-slate-500">
             {alert.source && <span>Source: {alert.source}</span>}
-            <span>Score: {alert.threat_score.toFixed(3)}</span>
+            <span>Score: {normalizedScore.toFixed(3)}</span>
             {alert.is_resolved && <span className="text-green-400">Resolved</span>}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

@@ -26,6 +26,18 @@ export function useSources() {
   return useQuery('sources', detectionService.getSources);
 }
 
+export function useSourceDailyTrends(days: number) {
+  return useQuery(['sourceDailyTrends', days], () => detectionService.getSourceDailyTrends(days), {
+    refetchInterval: 60000,
+  });
+}
+
+export function useCollectedItems(days: number, limit: number = 200) {
+  return useQuery(['collectedItems', days, limit], () => detectionService.getCollectedItems(days, limit), {
+    refetchInterval: 30000,
+  });
+}
+
 export function useUploadDocument() {
   const queryClient = useQueryClient();
   return useMutation(
@@ -141,11 +153,30 @@ export function useRunScanNow() {
       const polled = typeof data?.sources_polled === 'number' ? data.sources_polled : null;
       toast.success(polled !== null ? `Scan completed for ${polled} source(s)` : 'Scan completed');
       queryClient.invalidateQueries('alerts');
+      queryClient.invalidateQueries('collectedItems');
       queryClient.invalidateQueries('dashboardMetrics');
       queryClient.invalidateQueries('sources');
     },
     onError: () => {
       toast.error('Failed to run scan');
+    },
+  });
+}
+
+export function useResetScannedData() {
+  const queryClient = useQueryClient();
+  return useMutation(() => detectionService.resetScannedData(), {
+    onSuccess: (data: any) => {
+      const itemsDeleted = typeof data?.items_deleted === 'number' ? data.items_deleted : 0;
+      const alertsDeleted = typeof data?.alerts_deleted === 'number' ? data.alerts_deleted : 0;
+      toast.success(`Scanned data reset: ${itemsDeleted} items and ${alertsDeleted} alerts removed`);
+      queryClient.invalidateQueries('alerts');
+      queryClient.invalidateQueries('collectedItems');
+      queryClient.invalidateQueries('dashboardMetrics');
+      queryClient.invalidateQueries('sourceDailyTrends');
+    },
+    onError: () => {
+      toast.error('Failed to reset scanned data');
     },
   });
 }

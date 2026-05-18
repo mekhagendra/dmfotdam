@@ -67,12 +67,6 @@ class Settings(BaseSettings):
     ML_DEVICE: str = "cpu"              # "cpu" or "cuda"
     ML_MAX_CHARS: int = 4000            # per-chunk cap sent to the model
 
-    # --- Reddit API ---
-    REDDIT_CLIENT_ID: str = ""
-    REDDIT_CLIENT_SECRET: str = ""
-    REDDIT_USER_AGENT: str = "TDM-Research-Bot/1.0"
-    REDDIT_DEFAULT_SUBREDDITS: str = "news,worldnews,CredibleDefense"
-
     # --- RSS + Telegram (real-time news + channel bridges) ---
     # Users can add/remove more via the /monitoring/sources API.
     DEFAULT_RSS_FEEDS: List[str] = [

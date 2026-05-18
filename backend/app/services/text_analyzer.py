@@ -277,6 +277,10 @@ class TextAnalyzer:
         except Exception:
             return "unknown"
 
+    def _score_to_level(self, score: float) -> str:
+        from app.services.ml_service import _score_to_level
+        return _score_to_level(score)
+
     def _build_summary(
         self, level: str, score: float, ml: Dict[str, Any]
     ) -> str:

@@ -16,10 +16,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const primaryLinks = [
-    { path: '/', label: 'overview' },
+    { path: '/', label: 'Overview' },
     { path: '/analyse', label: 'Scan' },
-    { path: '/intel-feed', label: 'Threats' },
-    { path: '/monitoring', label: 'Source' },
+    { path: '/monitor', label: 'Monitor' },
     { path: '/trends', label: 'Trends' },
     { path: '/reports', label: 'Reports' },
     ...(user?.role === 'admin' ? [{ path: '/admin/users', label: 'Users' }] : []),
@@ -42,25 +41,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     <div style={{ minHeight: '100vh', background: '#F8FAFC' }}>
       {/* Topbar */}
       <header
+        className="layout-header"
         style={{
           background: '#FFFFFF',
           borderBottom: '1px solid #E2E8F0',
-          padding: '0 32px',
-          height: 64,
+          padding: '8px 16px',
+          minHeight: 64,
+          height: 'auto',
           display: 'flex',
           flexDirection: 'row',
-          alignItems: 'stretch',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          rowGap: 8,
           boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
         }}
       >
         {/* Logo */}
         <Link
           to="/"
+          className="layout-logo-wrap"
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 12,
-            paddingRight: 28,
+            paddingRight: 14,
             borderRight: '1px solid #E2E8F0',
             textDecoration: 'none',
           }}
@@ -77,6 +81,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           />
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <span
+              className="layout-logo-title"
               style={{
                 fontSize: 16,
                 fontWeight: 700,
@@ -93,12 +98,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         {/* Primary nav links */}
         <nav
+          className="layout-nav"
           style={{
             display: 'flex',
             flexDirection: 'row',
-            alignItems: 'stretch',
-            padding: '0 24px',
+            alignItems: 'center',
+            padding: '0 10px',
             gap: 4,
+            overflowX: 'auto',
+            scrollbarWidth: 'thin',
           }}
         >
           {primaryLinks.map((link) => {
@@ -110,16 +118,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 className="layout-nav-link"
                 style={{
                   fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 13,
-                  color: active ? '#2563EB' : '#64748B',
+                  fontSize: 18,
+                  color: active ? '#2563EB' : '#03224c',
                   letterSpacing: '0.04em',
                   padding: '0 18px',
+                  minHeight: 42,
+                  whiteSpace: 'nowrap',
                   display: 'flex',
                   alignItems: 'center',
                   borderBottom: `2px solid ${active ? '#2563EB' : 'transparent'}`,
                   textDecoration: 'none',
                   transition: 'color 0.15s',
-                  fontWeight: active ? 600 : 400,
+                  fontWeight: active ? 800 : 900,
                 }}
               >
                 {link.label}
@@ -129,10 +139,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </nav>
 
         {/* Spacer */}
-        <div style={{ flex: 1 }} />
+        <div className="layout-spacer" style={{ flex: 1 }} />
 
         {/* Right utility zone */}
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+        <div className="layout-right-zone" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 16 }}>
           {/* Alerts bell */}
           <div style={{ position: 'relative' }}>
             <button
@@ -269,6 +279,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className="layout-dropdown-item"
                   onClick={() => {
                     setDropdownOpen(false);
+                    navigate('/monitoring');
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 11,
+                    color: '#475569',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Source Settings
+                </div>
+                <div
+                  className="layout-dropdown-item"
+                  onClick={() => {
+                    setDropdownOpen(false);
                     navigate('/settings');
                   }}
                   style={{
@@ -279,7 +305,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     cursor: 'pointer',
                   }}
                 >
-                  settings
+                  Settings
                 </div>
                 <div
                   style={{
@@ -302,7 +328,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     cursor: 'pointer',
                   }}
                 >
-                  sign out
+                  Sign Out
                 </div>
               </div>
             )}
@@ -312,10 +338,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* Main content */}
       <main
+        className="layout-main"
         style={{
           background: '#F8FAFC',
           minHeight: 'calc(100vh - 64px)',
-          padding: '20px 32px',
+          padding: '16px clamp(12px, 2.5vw, 28px)',
         }}
       >
         {children}
@@ -331,6 +358,41 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         }
         .layout-dropdown-signout:hover {
           color: #EF4444 !important;
+        }
+        @media (max-width: 1024px) {
+          .layout-logo-title {
+            font-size: 14px !important;
+          }
+          .layout-nav-link {
+            font-size: 14px !important;
+            padding: 0 12px !important;
+          }
+        }
+        @media (max-width: 860px) {
+          .layout-header {
+            align-items: flex-start !important;
+          }
+          .layout-logo-wrap {
+            border-right: none !important;
+            padding-right: 0 !important;
+          }
+          .layout-logo-title {
+            display: none;
+          }
+          .layout-nav {
+            order: 3;
+            width: 100%;
+            padding: 0 !important;
+          }
+          .layout-spacer {
+            display: none;
+          }
+          .layout-right-zone {
+            margin-left: auto;
+          }
+          .layout-main {
+            padding: 12px !important;
+          }
         }
       `}</style>
     </div>

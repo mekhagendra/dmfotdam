@@ -3,7 +3,7 @@ import { useReports } from '../hooks/useDetection';
 import ThreatBadge from '../components/ThreatBadge';
 import { highlightKeywords } from '../utils/highlight';
 import { AnalysisResult } from '../services/detection.service';
-import { formatDateTime } from '../utils/formatDate';
+import { formatDateTime, getSydneyDateForFilename } from '../utils/formatDate';
 
 const Reports: React.FC = () => {
   const { data: reports, isLoading } = useReports();
@@ -52,7 +52,7 @@ const Reports: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `tdm-reports-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `tdm-reports-${getSydneyDateForFilename()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }, [reports]);
@@ -65,7 +65,7 @@ const Reports: React.FC = () => {
           {reports && reports.length > 0 && (
             <button
               onClick={exportCSV}
-              className="text-sm px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
+              className="text-sm px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white border border-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 focus:ring-offset-slate-100"
             >
               Export CSV
             </button>
@@ -79,6 +79,16 @@ const Reports: React.FC = () => {
             {reports.map((report) => {
               const isExpanded = expandedId === report.id;
               const keywords = report.keywords ?? [];
+              const modelScoreEntries = Object.entries(report.model_scores ?? {}).sort(
+                (a, b) => Number(b[1]) - Number(a[1]),
+              );
+              const rowModelNames = Array.from(
+                new Set(
+                  (report.row_results ?? []).flatMap((row) =>
+                    Object.keys(row.model_scores ?? {}),
+                  ),
+                ),
+              ).sort();
 
               return (
                 <div
@@ -158,23 +168,86 @@ const Reports: React.FC = () => {
                         )}
                       </div>
 
-                      {report.model_scores && Object.keys(report.model_scores).length > 0 && (
+                      {modelScoreEntries.length > 0 && (
                         <div>
                           <h4 className="text-xs font-semibold text-slate-500 mb-1">
                             Model Scores
                           </h4>
-                          <div className="flex flex-wrap gap-2">
-                            {Object.entries(report.model_scores)
-                              .sort((a, b) => b[1] - a[1])
-                              .map(([modelName, score]) => (
-                                <span
-                                  key={modelName}
-                                  className="text-xs bg-cyan-500/15 text-cyan-300 px-2 py-0.5 rounded"
-                                >
-                                  {modelName}: {Number(score).toFixed(4)}
-                                </span>
-                              ))}
+                          <div className="overflow-x-auto border border-edge rounded">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-panel-alt">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-400">Model</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-400">Score</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {modelScoreEntries.map(([modelName, score]) => (
+                                  <tr key={modelName} className="border-t border-edge">
+                                    <td className="px-3 py-2 text-slate-300">{modelName}</td>
+                                    <td className="px-3 py-2 text-cyan-300 font-medium">
+                                      {Number(score).toFixed(4)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
+                        </div>
+                      )}
+
+                      {report.row_results && report.row_results.length > 0 && rowModelNames.length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-500 mb-1">
+                            Message-wise Model Scores
+                          </h4>
+                          <div className="overflow-x-auto border border-edge rounded">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-panel-alt">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-400">Row</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-400">Message</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-400">Overall</th>
+                                  {rowModelNames.map((modelName) => (
+                                    <th
+                                      key={modelName}
+                                      className="px-3 py-2 text-left font-semibold text-slate-400 whitespace-nowrap"
+                                    >
+                                      {modelName}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {report.row_results.slice(0, 50).map((row) => (
+                                  <tr key={row.row} className="border-t border-edge align-top">
+                                    <td className="px-3 py-2 text-slate-500">{row.row}</td>
+                                    <td className="px-3 py-2 text-slate-300 max-w-md">
+                                      {row.message?.length > 120
+                                        ? `${row.message.slice(0, 120)}...`
+                                        : row.message}
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-300">
+                                      {Number(row.threat_score).toFixed(4)}
+                                    </td>
+                                    {rowModelNames.map((modelName) => {
+                                      const score = row.model_scores?.[modelName];
+                                      return (
+                                        <td key={modelName} className="px-3 py-2 text-slate-300">
+                                          {typeof score === 'number' ? score.toFixed(4) : '-'}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {report.row_results.length > 50 && (
+                            <p className="text-xs text-slate-500 mt-2">
+                              Showing first 50 rows in report view.
+                            </p>
+                          )}
                         </div>
                       )}
 

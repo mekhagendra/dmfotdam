@@ -135,10 +135,13 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.sources.create_index("is_active")
     await db.sources.create_index("owner_id")
 
+    collected_indexes = await db.collected_items.index_information()
+    if "uniq_source_item" in collected_indexes:
+        await db.collected_items.drop_index("uniq_source_item")
     await db.collected_items.create_index(
-        [("external_id", 1), ("source_type", 1)],
+        [("source_id", 1), ("source_type", 1), ("external_id", 1)],
         unique=True,
-        name="uniq_source_item",
+        name="uniq_source_item_per_source",
     )
     await db.collected_items.create_index("collected_at")
     await db.collected_items.create_index("threat_score")

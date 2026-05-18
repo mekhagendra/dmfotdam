@@ -55,6 +55,14 @@ def _doc_public(doc: dict) -> DocumentPublic:
 
 
 def _to_analysis_public(doc: dict) -> AnalysisPublic:
+    details = doc.get("details") or {}
+    ml = details.get("ml") if isinstance(details, dict) else {}
+    model_scores = doc.get("model_scores")
+    if (not isinstance(model_scores, dict) or not model_scores) and isinstance(ml, dict):
+        per_model = ml.get("per_model_scores")
+        if isinstance(per_model, dict) and per_model:
+            model_scores = per_model
+
     return AnalysisPublic(
         id=str(doc["_id"]),
         analysis_type=doc.get("analysis_type", "document"),
@@ -67,7 +75,7 @@ def _to_analysis_public(doc: dict) -> AnalysisPublic:
         sentiment=doc.get("sentiment"),
         language=doc.get("language"),
         row_results=doc.get("row_results"),
-        model_scores=doc.get("model_scores"),
+        model_scores=model_scores,
         created_at=doc.get("created_at"),
         completed_at=doc.get("completed_at"),
     )

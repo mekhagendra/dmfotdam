@@ -22,6 +22,44 @@ router = APIRouter(prefix="/detection", tags=["detection"])
 logger = get_logger(__name__)
 
 
+def _model_scores_from_doc(doc: dict) -> dict | None:
+    """Best-effort model score extraction for legacy analysis records."""
+    current = doc.get("model_scores")
+    if isinstance(current, dict) and current:
+        out = {}
+        for k, v in current.items():
+            try:
+                out[str(k)] = float(v)
+            except Exception:
+                continue
+        if out:
+            return out
+
+    details = doc.get("details") or {}
+    ml = details.get("ml") if isinstance(details, dict) else {}
+    if isinstance(ml, dict):
+        per_model = ml.get("per_model_scores")
+        if isinstance(per_model, dict) and per_model:
+            out = {}
+            for k, v in per_model.items():
+                try:
+                    out[str(k)] = float(v)
+                except Exception:
+                    continue
+            if out:
+                return out
+
+        model_name = ml.get("model")
+        try:
+            score = float(doc.get("threat_score"))
+        except Exception:
+            score = None
+        if model_name and score is not None:
+            return {str(model_name): score}
+
+    return None
+
+
 def _to_public(doc: dict) -> AnalysisPublic:
     return AnalysisPublic(
         id=str(doc["_id"]),
@@ -37,7 +75,7 @@ def _to_public(doc: dict) -> AnalysisPublic:
         source_url=doc.get("source_url"),
         explanation=doc.get("explanation"),
         row_results=doc.get("row_results"),
-        model_scores=doc.get("model_scores"),
+        model_scores=_model_scores_from_doc(doc),
         created_at=doc.get("created_at"),
         completed_at=doc.get("completed_at"),
     )

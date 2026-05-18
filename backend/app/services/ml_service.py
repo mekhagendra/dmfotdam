@@ -354,13 +354,19 @@ def _run_pipeline(pipe: object, text: str) -> Dict[str, float]:
 
 
 def _extract_threat_score(label_scores: Dict[str, float]) -> float:
-    """Compute single threat score from label_scores dict."""
+    """Compute single threat score from label_scores dict.
+
+    Only labels that match known threat/hate vocabulary contribute to the
+    score.  When the loaded model uses non-threat labels (e.g. a sentiment
+    model with POSITIVE/NEGATIVE), we return 0.0 rather than mis-treating
+    the max confidence as a threat signal.
+    """
     threat_candidates = [
         score for lbl, score in label_scores.items() if _is_threat_label(lbl)
     ]
     if threat_candidates:
         return max(threat_candidates)
-    return max(label_scores.values()) if label_scores else 0.0
+    return 0.0
 
 
 def get_available_models() -> List[Dict[str, str]]:

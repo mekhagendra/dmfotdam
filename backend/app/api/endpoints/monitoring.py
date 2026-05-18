@@ -23,6 +23,7 @@ from fastapi import (
 from pydantic import BaseModel
 
 from app.api.dependencies import get_current_user
+from app.core.config import get_settings
 from app.core.database import (
     alerts_col,
     analyses_col,
@@ -36,6 +37,28 @@ from app.services.collector_manager import broadcaster, run_all_sources
 import app.services.ml_service as _ml
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
+_settings = get_settings()
+
+
+def _normalize_threat_score(raw: float | int | None) -> float:
+    """Normalize mixed legacy score scales to 0..1 for consistent UI/API behavior."""
+    if raw is None:
+        return 0.0
+    try:
+        score = float(raw)
+    except Exception:
+        return 0.0
+
+    # Legacy data may have been stored as percentage points (0..100).
+    if score > 1.0 and score <= 100.0:
+        score = score / 100.0
+
+    # Guard against malformed values.
+    if score < 0.0:
+        return 0.0
+    if score > 1.0:
+        return 1.0
+    return round(score, 4)
 
 
 def _normalize_source_url(source_type: str, value: str) -> str:
@@ -96,13 +119,15 @@ def _src_public(doc: dict) -> SourcePublic:
 
 
 def _alert_public(doc: dict) -> AlertPublic:
+    details = doc.get("details") or {}
     return AlertPublic(
         id=str(doc["_id"]),
         title=doc["title"],
         description=doc.get("description"),
         threat_level=doc["threat_level"],
-        threat_score=float(doc.get("threat_score", 0.0)),
+        threat_score=_normalize_threat_score(doc.get("threat_score", 0.0)),
         source=doc.get("source"),
+        source_name=details.get("source_name"),
         source_type=doc.get("source_type"),
         is_read=doc.get("is_read", False),
         is_resolved=doc.get("is_resolved", False),
@@ -128,6 +153,33 @@ class DashboardMetrics(BaseModel):
     source_breakdown: Dict[str, int]
     active_model: str | None = None
     model_f1: float | None = None
+
+
+class SourceTrendPoint(BaseModel):
+    date: str
+    source_id: str
+    source_name: str
+    source_type: str
+    item_count: int
+    avg_threat_score: float
+
+
+class SourceTrendResponse(BaseModel):
+    days: int
+    points: list[SourceTrendPoint]
+
+
+class CollectedItemPublic(BaseModel):
+    id: str
+    source_id: str
+    source_name: str
+    source_type: str
+    title: str
+    text: str | None = None
+    url: str | None = None
+    threat_level: str
+    threat_score: float
+    collected_at: datetime
 
 
 # ---------- sources ----------
@@ -236,6 +288,75 @@ async def resolve_alert(alert_id: str, current=Depends(get_current_user)) -> dic
     return {"message": "Alert resolved"}
 
 
+@router.get("/items", response_model=list[CollectedItemPublic])
+async def list_collected_items(
+    days: int = 7,
+    limit: int = 200,
+    current=Depends(get_current_user),
+) -> list[CollectedItemPublic]:
+    """List recently scanned monitoring items for current user's sources."""
+    clamped_days = max(1, min(days, 180))
+    clamped_limit = max(1, min(limit, 1000))
+    since = datetime.now(timezone.utc) - timedelta(days=clamped_days)
+
+    owned_sources = [
+        s
+        async for s in sources_col().find(
+            {"owner_id": current.get("_id")},
+            {"_id": 1, "name": 1, "source_type": 1},
+        )
+    ]
+    if not owned_sources:
+        return []
+
+    source_map: Dict[str, Dict[str, str]] = {
+        str(s["_id"]): {
+            "name": s.get("name", str(s["_id"])),
+            "source_type": s.get("source_type", "unknown"),
+        }
+        for s in owned_sources
+    }
+    source_ids = list(source_map.keys())
+
+    cursor = (
+        collected_items_col()
+        .find(
+            {
+                "source_id": {"$in": source_ids},
+                "source_type": {"$in": ["reddit", "rss", "telegram", "url"]},
+                "collected_at": {"$gte": since},
+            }
+        )
+        .sort("collected_at", -1)
+        .limit(clamped_limit)
+    )
+
+    items: list[CollectedItemPublic] = []
+    async for doc in cursor:
+        sid = doc.get("source_id")
+        if not sid:
+            continue
+        src = source_map.get(str(sid))
+        if not src:
+            continue
+        items.append(
+            CollectedItemPublic(
+                id=str(doc.get("_id")),
+                source_id=str(sid),
+                source_name=src["name"],
+                source_type=src["source_type"],
+                title=doc.get("title") or "(untitled)",
+                text=doc.get("text"),
+                url=doc.get("url"),
+                threat_level=doc.get("threat_level") or "low",
+                threat_score=_normalize_threat_score(doc.get("threat_score") or 0.0),
+                collected_at=doc.get("collected_at") or datetime.now(timezone.utc),
+            )
+        )
+
+    return items
+
+
 # ---------- dashboard ----------
 
 
@@ -330,15 +451,9 @@ async def dashboard_metrics(current=Depends(get_current_user)) -> DashboardMetri
     except Exception:
         pass
 
-    # category_breakdown — aggregate keyword hits from recent analyses
+    # category_breakdown — group completed analyses by threat_level (24h window)
     category_breakdown: Dict[str, int] = {}
     try:
-        _CATEGORY_KEYWORDS: Dict[str, list] = {
-            "violence": ["kill", "attack", "bomb", "weapon", "shoot", "murder", "assault", "explode"],
-            "extremism": ["jihad", "martyr", "caliphate", "crusade", "radical", "extremist", "infidel"],
-            "planning": ["plan", "target", "coordinate", "recruit", "operation", "execute", "strategy"],
-            "financing": ["fund", "donate", "crypto", "money", "launder", "finance", "payment"],
-        }
         pipeline_cat = [
             {
                 "$match": {
@@ -347,14 +462,16 @@ async def dashboard_metrics(current=Depends(get_current_user)) -> DashboardMetri
                     "created_at": {"$gte": yesterday},
                 }
             },
-            {"$project": {"keywords": 1}},
+            {
+                "$group": {
+                    "_id": "$threat_level",
+                    "count": {"$sum": 1},
+                }
+            },
         ]
-        async for doc in analyses_col().aggregate(pipeline_cat):
-            kws = doc.get("keywords") or []
-            lower_kws = [k.lower() for k in kws]
-            for category, terms in _CATEGORY_KEYWORDS.items():
-                if any(term in kw for kw in lower_kws for term in terms):
-                    category_breakdown[category] = category_breakdown.get(category, 0) + 1
+        async for row in analyses_col().aggregate(pipeline_cat):
+            level = (row.get("_id") or "unknown").lower()
+            category_breakdown[level] = row.get("count", 0)
     except Exception:
         pass
 
@@ -410,6 +527,81 @@ async def dashboard_metrics(current=Depends(get_current_user)) -> DashboardMetri
     )
 
 
+@router.get("/trends/source-daily", response_model=SourceTrendResponse)
+async def source_daily_trends(days: int = 30, current=Depends(get_current_user)) -> SourceTrendResponse:
+    """Return daily trend points grouped by source for the current user's added sources."""
+    clamped_days = max(1, min(days, 180))
+    since = datetime.now(timezone.utc) - timedelta(days=clamped_days)
+
+    owned_sources = [
+        s
+        async for s in sources_col().find(
+            {"owner_id": current.get("_id")},
+            {"_id": 1, "name": 1, "source_type": 1},
+        )
+    ]
+    if not owned_sources:
+        return SourceTrendResponse(days=clamped_days, points=[])
+
+    source_map: Dict[str, Dict[str, str]] = {
+        str(s["_id"]): {
+            "name": s.get("name", str(s["_id"])),
+            "source_type": s.get("source_type", "unknown"),
+        }
+        for s in owned_sources
+    }
+    source_ids = list(source_map.keys())
+
+    pipeline = [
+        {
+            "$match": {
+                "source_id": {"$in": source_ids},
+                "source_type": {"$in": ["reddit", "rss", "telegram", "url"]},
+                "collected_at": {"$gte": since},
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "date": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": "$collected_at",
+                            "timezone": _settings.TIMEZONE,
+                        }
+                    },
+                    "source_id": "$source_id",
+                },
+                "item_count": {"$sum": 1},
+                "avg_threat_score": {"$avg": "$threat_score"},
+            }
+        },
+        {"$sort": {"_id.date": 1, "_id.source_id": 1}},
+    ]
+
+    points: list[SourceTrendPoint] = []
+    async for row in collected_items_col().aggregate(pipeline):
+        src_id = row.get("_id", {}).get("source_id")
+        date = row.get("_id", {}).get("date")
+        if not src_id or not date:
+            continue
+        src_meta = source_map.get(src_id)
+        if not src_meta:
+            continue
+        points.append(
+            SourceTrendPoint(
+                date=date,
+                source_id=src_id,
+                source_name=src_meta["name"],
+                source_type=src_meta["source_type"],
+                item_count=int(row.get("item_count") or 0),
+                avg_threat_score=_normalize_threat_score(row.get("avg_threat_score") or 0.0),
+            )
+        )
+
+    return SourceTrendResponse(days=clamped_days, points=points)
+
+
 # ---------- manual scan trigger ----------
 
 
@@ -417,6 +609,31 @@ async def dashboard_metrics(current=Depends(get_current_user)) -> DashboardMetri
 async def run_scan_now(current=Depends(get_current_user)) -> dict:
     """Trigger an immediate poll of the current user's active sources."""
     return await run_all_sources(owner_id=current.get("_id"))
+
+
+@router.delete("/data/reset")
+async def reset_scanned_data(current=Depends(get_current_user)) -> dict:
+    """Delete only the current user's scanned monitoring data (alerts + collected items)."""
+    owner_id_obj = current.get("_id")
+    owner_id_str = str(owner_id_obj)
+
+    owned_source_ids = [
+        str(src["_id"])
+        async for src in sources_col().find({"owner_id": owner_id_obj}, {"_id": 1})
+    ]
+
+    alerts_res = await alerts_col().delete_many({"owner_id": owner_id_str})
+    items_res = (
+        await collected_items_col().delete_many({"source_id": {"$in": owned_source_ids}})
+        if owned_source_ids
+        else None
+    )
+
+    return {
+        "message": "Scanned data reset completed",
+        "alerts_deleted": alerts_res.deleted_count,
+        "items_deleted": items_res.deleted_count if items_res else 0,
+    }
 
 
 # ---------- real-time alert stream ----------

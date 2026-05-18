@@ -45,9 +45,23 @@ from sklearn.preprocessing import FunctionTransformer
 # ── paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
-DATASET_PATH = os.path.join(BACKEND_DIR, "data", "datasets", "extremisim.csv")
 MODEL_DIR = os.path.join(BACKEND_DIR, "data", "models")
 OUTPUT_DIR = os.path.join(BACKEND_DIR, "data", "datasets", "eda_output")
+
+
+def resolve_dataset_path() -> str:
+    preferred = os.path.join(BACKEND_DIR, "data", "datasets", "training_dataset.csv")
+    legacy = os.path.join(BACKEND_DIR, "data", "datasets", "extremisim.csv")
+    if os.path.exists(preferred):
+        return preferred
+    if os.path.exists(legacy):
+        return legacy
+    raise FileNotFoundError(
+        f"Dataset not found. Checked: {preferred} and {legacy}"
+    )
+
+
+DATASET_PATH = resolve_dataset_path()
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -60,6 +74,13 @@ LABEL_MAP = {"NON_EXTREMIST": "low", "EXTREMIST": "high"}
 def load_data():
     print(f"Loading dataset from {DATASET_PATH} ...")
     df = pd.read_csv(DATASET_PATH, encoding="utf-8")
+    # normalise column names for new dataset schema (text/category)
+    if "text" in df.columns and "Original_Message" not in df.columns:
+        df = df.rename(columns={"text": "Original_Message"})
+    if "category" in df.columns and "Extremism_Label" not in df.columns:
+        df["Extremism_Label"] = df["category"].map(
+            {"Extremist": "EXTREMIST", "NonExtremist": "NON_EXTREMIST"}
+        ).fillna("NON_EXTREMIST")
     df = df[df["Original_Message"].notna() & (df["Original_Message"].str.strip() != "")].copy()
     print(f"  {len(df)} rows with non-empty text")
 

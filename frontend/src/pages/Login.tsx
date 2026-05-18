@@ -158,25 +158,30 @@ const Login: React.FC = () => {
 
   // ---------- UI ----------
   const inputClass =
-    'w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500';
+    'w-full px-3 py-2 border border-edge rounded-md bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-300 transition-colors';
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#060A12' }}>
-      <div className="max-w-md w-full bg-panel rounded-lg border border-edge shadow-lg p-8">
+    <div
+      className="min-h-screen flex items-center justify-center px-4 py-8"
+      style={{
+        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+      }}
+    >
+      <div className="max-w-md w-full bg-panel rounded-xl border border-edge shadow-sm p-6 sm:p-8">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">TDM System</h1>
-          <p className="text-slate-500 mt-2">Terrorism Detection &amp; Monitoring</p>
+          <h1 className="text-3xl font-bold text-slate-900">TDM System</h1>
+          <p className="text-slate-600 mt-2">Terrorism Detection &amp; Monitoring</p>
         </div>
 
         {/* ============ LOGIN ============ */}
         {step === 'login' && (
           <>
-            <h2 className="text-xl font-semibold mb-6 text-slate-100">Sign In</h2>
+            <h2 className="text-xl font-semibold mb-6 text-slate-900">Sign In</h2>
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
                 <input
                   type="text"
                   value={username}
@@ -187,7 +192,7 @@ const Login: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Password</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
                 <input
                   type="password"
                   value={password}
@@ -222,9 +227,9 @@ const Login: React.FC = () => {
 
             {/* Divider */}
             <div className="flex items-center my-5">
-              <div className="flex-1 border-t border-slate-700" />
+              <div className="flex-1 border-t border-edge" />
               <span className="mx-3 text-sm text-slate-500">or</span>
-              <div className="flex-1 border-t border-slate-700" />
+              <div className="flex-1 border-t border-edge" />
             </div>
 
             {/* Google sign-in */}
@@ -252,12 +257,12 @@ const Login: React.FC = () => {
         {/* ============ REGISTER — form ============ */}
         {step === 'register-form' && (
           <>
-            <h2 className="text-xl font-semibold mb-6 text-slate-100">Create Account</h2>
+            <h2 className="text-xl font-semibold mb-6 text-slate-900">Create Account</h2>
 
             <form onSubmit={handleSendOtp} className="space-y-4">
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Full Name</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
                 <input
                   type="text"
                   value={fullName}
@@ -267,7 +272,7 @@ const Login: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
                 <input
                   type="email"
                   value={email}
@@ -278,7 +283,7 @@ const Login: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
                 <input
                   type="text"
                   value={username}
@@ -290,7 +295,7 @@ const Login: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Password</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
                 <input
                   type="password"
                   value={password}
@@ -311,9 +316,9 @@ const Login: React.FC = () => {
 
             {/* Divider */}
             <div className="flex items-center my-5">
-              <div className="flex-1 border-t border-slate-700" />
+              <div className="flex-1 border-t border-edge" />
               <span className="mx-3 text-sm text-slate-500">or</span>
-              <div className="flex-1 border-t border-slate-700" />
+              <div className="flex-1 border-t border-edge" />
             </div>
 
             {/* Google sign-up */}
@@ -341,14 +346,14 @@ const Login: React.FC = () => {
         {/* ============ OTP VERIFICATION ============ */}
         {step === 'otp-verify' && (
           <>
-            <h2 className="text-xl font-semibold mb-2 text-slate-100">Verify Your Email</h2>
+            <h2 className="text-xl font-semibold mb-2 text-slate-900">Verify Your Email</h2>
             <p className="text-sm text-slate-500 mb-6">
               Enter the 6-digit code we sent to <strong>{email}</strong>
             </p>
 
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Verification Code
                 </label>
                 <input
@@ -374,7 +379,7 @@ const Login: React.FC = () => {
             <div className="mt-4 flex justify-between text-sm">
               <button
                 onClick={() => setStep('register-form')}
-                className="text-slate-500 hover:text-slate-300"
+                className="text-slate-500 hover:text-slate-700"
               >
                 &larr; Back
               </button>
@@ -397,14 +402,14 @@ const Login: React.FC = () => {
 
         {step === 'forgot-password' && (
           <>
-            <h2 className="text-xl font-semibold mb-2 text-slate-100">Reset Password</h2>
+            <h2 className="text-xl font-semibold mb-2 text-slate-900">Reset Password</h2>
             <p className="text-sm text-slate-500 mb-6">
               Enter your account email. We&apos;ll send a 6-digit OTP that lets you set a new password.
             </p>
 
             <form onSubmit={resetOtpSent ? handleResetPassword : handleSendPasswordResetOtp} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
                 <input
                   type="email"
                   value={email}
@@ -417,7 +422,7 @@ const Login: React.FC = () => {
               {resetOtpSent && (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">OTP Code</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">OTP Code</label>
                     <input
                       type="text"
                       inputMode="numeric"
@@ -430,7 +435,7 @@ const Login: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">New Password</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
                     <input
                       type="password"
                       value={resetPassword}
@@ -442,7 +447,7 @@ const Login: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">Confirm New Password</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Confirm New Password</label>
                     <input
                       type="password"
                       value={confirmResetPassword}
@@ -470,7 +475,7 @@ const Login: React.FC = () => {
                   resetForgotPasswordState();
                   setStep('login');
                 }}
-                className="text-slate-500 hover:text-slate-300"
+                className="text-slate-500 hover:text-slate-700"
               >
                 &larr; Back to sign in
               </button>

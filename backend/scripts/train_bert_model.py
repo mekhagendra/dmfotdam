@@ -50,10 +50,24 @@ from transformers import (
 # ── paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
-DATASET_PATH = os.path.join(BACKEND_DIR, "data", "datasets", "extremisim.csv")
 MODEL_DIR = os.path.join(BACKEND_DIR, "data", "models")
 BERT_MODEL_DIR = os.path.join(MODEL_DIR, "bert_threat_model")
 OUTPUT_DIR = os.path.join(BACKEND_DIR, "data", "datasets", "eda_output")
+
+
+def resolve_dataset_path() -> str:
+    preferred = os.path.join(BACKEND_DIR, "data", "datasets", "training_dataset.csv")
+    legacy = os.path.join(BACKEND_DIR, "data", "datasets", "extremisim.csv")
+    if os.path.exists(preferred):
+        return preferred
+    if os.path.exists(legacy):
+        return legacy
+    raise FileNotFoundError(
+        f"Dataset not found. Checked: {preferred} and {legacy}"
+    )
+
+
+DATASET_PATH = resolve_dataset_path()
 
 os.makedirs(BERT_MODEL_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)

@@ -1,214 +1,188 @@
-import React, { useState } from 'react';
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell,
-} from 'recharts';
-import { useRedditTrends, useSubredditStats, useRedditStatus, useTriggerScan } from '../hooks/useReddit';
-import { format, parseISO } from 'date-fns';
-import { formatDateTime } from '../utils/formatDate';
+import React, { useMemo, useState } from 'react';
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useSourceDailyTrends, useSources } from '../hooks/useDetection';
 
-const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+const SOURCE_COLORS = [
+  '#2563EB',
+  '#16A34A',
+  '#DC2626',
+  '#9333EA',
+  '#D97706',
+  '#0D9488',
+  '#DB2777',
+  '#334155',
+];
 
 const Trends: React.FC = () => {
   const [days, setDays] = useState(30);
-  const { data: trends, isLoading: trendsLoading } = useRedditTrends(days);
-  const { data: subredditStats, isLoading: statsLoading } = useSubredditStats(days);
-  const { data: status } = useRedditStatus();
-  const scanMutation = useTriggerScan();
+  const [selectedSourceId, setSelectedSourceId] = useState<string>('');
+  const { data: sources = [] } = useSources();
+  const { data: trendData, isLoading } = useSourceDailyTrends(days);
 
-  const formattedTrends = (trends || []).map((t) => ({
-    ...t,
-    dateLabel: (() => { try { return format(parseISO(t.date), 'MMM dd'); } catch { return t.date; } })(),
-    avg_threat_score: Number((t.avg_threat_score * 100).toFixed(1)),
-    max_threat_score: Number((t.max_threat_score * 100).toFixed(1)),
-  }));
+  const sourceMap = useMemo(() => {
+    return new Map(sources.map((s) => [s.id, s]));
+  }, [sources]);
 
-  const totalPosts = subredditStats?.reduce((sum, s) => sum + s.total_posts, 0) ?? 0;
-  const totalHighThreats = subredditStats?.reduce((sum, s) => sum + s.high_threat_count, 0) ?? 0;
-  const avgScore = subredditStats && subredditStats.length > 0
-    ? (subredditStats.reduce((sum, s) => sum + s.avg_threat_score, 0) / subredditStats.length)
-    : 0;
+  const filteredPoints = useMemo(() => {
+    const points = trendData?.points || [];
+    if (!selectedSourceId) {
+      return points;
+    }
+    return points.filter((p) => p.source_id === selectedSourceId);
+  }, [trendData?.points, selectedSourceId]);
+
+  const dateLabels = useMemo(() => {
+    return Array.from(new Set(filteredPoints.map((p) => p.date))).sort();
+  }, [filteredPoints]);
+
+  const sourceSeries = useMemo(() => {
+    const ids = Array.from(new Set(filteredPoints.map((p) => p.source_id)));
+    return ids.map((id) => ({
+      id,
+      name: sourceMap.get(id)?.name || id,
+    }));
+  }, [filteredPoints, sourceMap]);
+
+  const chartData = useMemo(() => {
+    const byDateAndSource = new Map<string, number>();
+    for (const p of filteredPoints) {
+      byDateAndSource.set(`${p.date}::${p.source_id}`, Number(p.avg_threat_score.toFixed(4)));
+    }
+
+    return dateLabels.map((date) => {
+      const row: Record<string, string | number | null> = { date };
+      for (const s of sourceSeries) {
+        row[s.id] = byDateAndSource.has(`${date}::${s.id}`)
+          ? byDateAndSource.get(`${date}::${s.id}`) || 0
+          : null;
+      }
+      return row;
+    });
+  }, [filteredPoints, dateLabels, sourceSeries]);
+
+  const overallAvgThreatScore =
+    filteredPoints.length > 0
+      ? filteredPoints.reduce((sum, p) => sum + p.avg_threat_score, 0) / filteredPoints.length
+      : 0;
+
+  const peakAvgThreatScore =
+    filteredPoints.length > 0
+      ? Math.max(...filteredPoints.map((p) => p.avg_threat_score))
+      : 0;
 
   return (
     <div className="space-y-6">
-      {/* Header with controls */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-100">Reddit Threat Trends</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            {status?.available
-              ? `Monitoring ${status.default_subreddits.length} subreddits · ${status.total_stored_posts} posts stored`
-              : 'Reddit API not configured'}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="px-3 py-2 border border-slate-600 rounded-md text-sm bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value={7}>Last 7 days</option>
-            <option value={14}>Last 14 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
-          <button
-            onClick={() => scanMutation.mutate({})}
-            disabled={scanMutation.isLoading}
-            className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium disabled:opacity-50"
-          >
-            {scanMutation.isLoading ? 'Scanning...' : 'Run Scan Now'}
-          </button>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900">Source Trends</h2>
+            <p className="text-sm text-slate-600 mt-1">
+              Daily trend analysis for user-added monitoring sources. One line per source.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <select
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              aria-label="Days filter"
+            >
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+            </select>
+
+            <select
+              value={selectedSourceId}
+              onChange={(e) => setSelectedSourceId(e.target.value)}
+              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[220px]"
+              aria-label="Source filter"
+            >
+              <option value="">All Added Sources</option>
+              {sources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <SummaryCard title="Total Posts Scanned" value={totalPosts} color="blue" />
-        <SummaryCard title="High Threat Posts" value={totalHighThreats} color="red" />
-        <SummaryCard title="Avg Threat Score" value={`${(avgScore * 100).toFixed(1)}%`} color="yellow" />
-        <SummaryCard
-          title="Last Scan"
-          value={
-            status?.last_scan_time
-              ? formatDateTime(status.last_scan_time)
-              : 'Never'
-          }
-          color="purple"
-        />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">Active series</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{sourceSeries.length}</p>
+        </div>
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">Days displayed</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{dateLabels.length}</p>
+        </div>
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">Overall avg threat score</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{overallAvgThreatScore.toFixed(3)}</p>
+        </div>
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">Peak daily avg score</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{peakAvgThreatScore.toFixed(3)}</p>
+        </div>
       </div>
 
-      {/* Threat Score Timeline */}
-        <div className="bg-panel rounded-lg border border-edge p-6">
-        <h3 className="text-lg font-semibold mb-4 text-slate-100">Threat Score Timeline</h3>
-        {trendsLoading ? (
-          <p className="text-slate-500 text-center py-12">Loading trends...</p>
-        ) : formattedTrends.length === 0 ? (
-          <p className="text-slate-500 text-center py-12">No trend data available. Run a scan to start collecting data.</p>
+      <div className="bg-white rounded-lg border border-slate-300 p-4 sm:p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-slate-900">Daily Source Trend (Average Threat Score)</h3>
+          <span className="text-sm text-slate-600">X-axis: Day | Y-axis: Average threat score (0-1)</span>
+        </div>
+
+        {isLoading ? (
+          <p className="text-slate-500 py-10 text-center">Loading trends...</p>
+        ) : chartData.length === 0 ? (
+          <div className="text-center py-10">
+            <h4 className="text-base font-semibold text-slate-900 mb-1">No trend data available</h4>
+            <p className="text-sm text-slate-600">Add sources and run scans to generate daily trends.</p>
+          </div>
         ) : (
-          <ResponsiveContainer width="100%" height={350}>
-            <LineChart data={formattedTrends}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="dateLabel" fontSize={12} />
-              <YAxis fontSize={12} unit="%" />
-              <Tooltip formatter={(value: number) => [`${value}%`]} />
-              <Legend />
-              <Line type="monotone" dataKey="avg_threat_score" stroke="#eab308" name="Avg Threat %" strokeWidth={2} />
-              <Line type="monotone" dataKey="max_threat_score" stroke="#ef4444" name="Max Threat %" strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Daily Post Counts */}
-        <div className="bg-panel rounded-lg border border-edge p-6">
-          <h3 className="text-lg font-semibold mb-4 text-slate-100">Daily Post Volume</h3>
-          {trendsLoading ? (
-            <p className="text-slate-500 text-center py-12">Loading...</p>
-          ) : formattedTrends.length === 0 ? (
-            <p className="text-slate-500 text-center py-12">No data</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={formattedTrends}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="dateLabel" fontSize={12} />
-                <YAxis fontSize={12} />
-                <Tooltip />
+          <div className="w-full h-[420px] sm:h-[500px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 12, right: 16, left: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 12 }} />
+                <YAxis tick={{ fill: '#64748B', fontSize: 12 }} domain={[0, 1]} />
+                <Tooltip
+                  formatter={(value) => {
+                    const numeric = typeof value === 'number' ? value : Number(value);
+                    const label = Number.isFinite(numeric) ? numeric.toFixed(3) : '-';
+                    return [label, 'Avg Threat Score'];
+                  }}
+                  contentStyle={{
+                    backgroundColor: '#FFFFFF',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: 8,
+                  }}
+                />
                 <Legend />
-                <Bar dataKey="total_posts" fill="#3b82f6" name="Total Posts" />
-                <Bar dataKey="high_threat_count" fill="#ef4444" name="High Threat" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* Subreddit Distribution */}
-        <div className="bg-panel rounded-lg border border-edge p-6">
-          <h3 className="text-lg font-semibold mb-4 text-slate-100">Subreddit Distribution</h3>
-          {statsLoading ? (
-            <p className="text-slate-500 text-center py-12">Loading...</p>
-          ) : !subredditStats || subredditStats.length === 0 ? (
-            <p className="text-slate-500 text-center py-12">No data</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={subredditStats}
-                  dataKey="total_posts"
-                  nameKey="subreddit"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={100}
-                  label={({ subreddit, percent }) => `r/${subreddit} (${(percent * 100).toFixed(0)}%)`}
-                >
-                  {subredditStats.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number, name: string) => [value, `r/${name}`]} />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      {/* Subreddit Stats Table */}
-      <div className="bg-panel rounded-lg border border-edge p-6">
-        <h3 className="text-lg font-semibold mb-4 text-slate-100">Subreddit Statistics</h3>
-        {statsLoading ? (
-          <p className="text-slate-500">Loading...</p>
-        ) : !subredditStats || subredditStats.length === 0 ? (
-          <p className="text-slate-500">No subreddit data available.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-700">
-              <thead className="bg-panel-alt">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Subreddit</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Posts</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Avg Score</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Max Score</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">High Threat</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700">
-                {subredditStats.map((stat) => (
-                  <tr key={stat.subreddit} className="hover:bg-panel-hover">
-                    <td className="px-4 py-3 text-sm font-medium text-primary-400">r/{stat.subreddit}</td>
-                    <td className="px-4 py-3 text-sm text-slate-200">{stat.total_posts}</td>
-                    <td className="px-4 py-3 text-sm text-slate-200">{(stat.avg_threat_score * 100).toFixed(1)}%</td>
-                    <td className="px-4 py-3 text-sm text-slate-200">{(stat.max_threat_score * 100).toFixed(1)}%</td>
-                    <td className="px-4 py-3 text-sm">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        stat.high_threat_count > 0 ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-400'
-                      }`}>
-                        {stat.high_threat_count}
-                      </span>
-                    </td>
-                  </tr>
+                {sourceSeries.map((series, idx) => (
+                  <Line
+                    key={series.id}
+                    type="linear"
+                    dataKey={series.id}
+                    name={series.name}
+                    stroke={SOURCE_COLORS[idx % SOURCE_COLORS.length]}
+                    strokeWidth={2.2}
+                    dot={false}
+                    connectNulls={false}
+                    activeDot={{ r: 4 }}
+                  />
                 ))}
-              </tbody>
-            </table>
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         )}
       </div>
     </div>
   );
 };
-
-const colorMap: Record<string, string> = {
-  blue: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  yellow: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-  red: 'bg-red-500/10 text-red-400 border-red-500/20',
-  purple: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-};
-
-const SummaryCard: React.FC<{ title: string; value: string | number; color: string }> = ({ title, value, color }) => (
-  <div className={`rounded-lg border p-4 ${colorMap[color] || colorMap.blue}`}>
-    <p className="text-sm font-medium opacity-80">{title}</p>
-    <p className="text-2xl font-bold mt-1">{value}</p>
-  </div>
-);
 
 export default Trends;

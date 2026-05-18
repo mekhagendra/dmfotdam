@@ -28,7 +28,28 @@ plt.rcParams.update({
 })
 
 print("Loading dataset...")
-df = pd.read_csv('data/datasets/extremisim.csv', encoding='utf-8')
+data_dir = Path("data/datasets")
+dataset_path = data_dir / "training_dataset.csv"
+if not dataset_path.exists():
+    legacy_path = data_dir / "extremisim.csv"
+    if legacy_path.exists():
+        dataset_path = legacy_path
+    else:
+        raise FileNotFoundError(
+            f"Dataset not found. Checked: {dataset_path} and {legacy_path}"
+        )
+
+df = pd.read_csv(dataset_path, encoding='utf-8')
+
+# Normalize dataset schema to expected columns.
+if 'text' in df.columns and 'Original_Message' not in df.columns:
+    df = df.rename(columns={'text': 'Original_Message'})
+if 'category' in df.columns and 'Extremism_Label' not in df.columns:
+    df['Extremism_Label'] = df['category'].map({
+        'Extremist': 'EXTREMIST',
+        'NonExtremist': 'NON_EXTREMIST',
+    }).fillna('NON_EXTREMIST')
+
 # Drop rows with missing messages
 df = df[df['Original_Message'].notna() & (df['Original_Message'].str.strip() != '')].copy()
 # Feature engineering
@@ -402,9 +423,9 @@ print("\n" + "=" * 60)
 print("EDA SUMMARY STATISTICS")
 print("=" * 60)
 
-print(f"\nDataset: Extremism Detection Dataset (extremisim.csv)")
+print(f"\nDataset: Extremism Detection Dataset (training_dataset.csv)")
 print(f"Records: {len(df):,} (usable)")
-print(f"Features: 2 (Original_Message, Extremism_Label)")
+print(f"Features: 2 (text, Extremism_Label)")
 
 print(f"\nClass Distribution:")
 for label in sorted(df['Extremism_Label'].unique()):

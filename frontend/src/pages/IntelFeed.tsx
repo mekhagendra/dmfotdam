@@ -1,293 +1,300 @@
-import React, { useState } from 'react';
-import { useFlaggedPosts, useMarkReviewed, useTriggerScan, useSearchReddit } from '../hooks/useReddit';
+import React, { useMemo, useState } from 'react';
 import ThreatBadge from '../components/ThreatBadge';
-import { format, parseISO } from 'date-fns';
+import { useAlerts, useCollectedItems, useResetScannedData, useRunScanNow, useSources } from '../hooks/useDetection';
+import { formatDateTime } from '../utils/formatDate';
+
+const DURATION_OPTIONS = [
+  { label: 'Last 24 hours', valueMs: 24 * 60 * 60 * 1000 },
+  { label: 'Last 3 days', valueMs: 3 * 24 * 60 * 60 * 1000 },
+  { label: 'Last 7 days', valueMs: 7 * 24 * 60 * 60 * 1000 },
+  { label: 'Last 14 days', valueMs: 14 * 24 * 60 * 60 * 1000 },
+  { label: 'Last 30 days', valueMs: 30 * 24 * 60 * 60 * 1000 },
+  { label: 'Last 90 days', valueMs: 90 * 24 * 60 * 60 * 1000 },
+];
 
 const IntelFeed: React.FC = () => {
-  const [threatFilter, setThreatFilter] = useState<string>('');
-  const [subredditFilter, setSubredditFilter] = useState<string>('');
-  const [daysFilter, setDaysFilter] = useState(30);
-  const [selectedPost, setSelectedPost] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [durationFilterMs, setDurationFilterMs] = useState<number>(7 * 24 * 60 * 60 * 1000);
+  const [selectedSourceName, setSelectedSourceName] = useState<string>('');
+  const [selectedCriticality, setSelectedCriticality] = useState<string>('');
+  const runScanMutation = useRunScanNow();
+  const resetDataMutation = useResetScannedData();
+  const { data: alerts, isLoading: alertsLoading } = useAlerts();
+  const { data: sources } = useSources();
+  const selectedDays = Math.max(1, Math.round(durationFilterMs / (24 * 60 * 60 * 1000)));
+  const { data: collectedItems, isLoading: itemsLoading } = useCollectedItems(selectedDays, 300);
 
-  const { data: posts, isLoading } = useFlaggedPosts({
-    threat_level: threatFilter || undefined,
-    subreddit: subredditFilter || undefined,
-    days: daysFilter,
-    limit: 100,
-  });
+  const sourceOptions = useMemo(() => {
+    return (sources || []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      type: s.source_type,
+    }));
+  }, [sources]);
 
-  const markReviewed = useMarkReviewed();
-  const scanMutation = useTriggerScan();
-  const searchMutation = useSearchReddit();
+  const filteredAlerts = useMemo(() => {
+    const now = Date.now();
+    const maxAgeMs = durationFilterMs;
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      searchMutation.mutate({ query: searchQuery.trim(), limit: 25 });
+    return (alerts || []).filter((alert) => {
+      if (selectedSourceName) {
+        const alertSourceName = alert.source_name || '';
+        if (alertSourceName !== selectedSourceName) {
+          return false;
+        }
+      }
+      if (!alert.source_type) {
+        return false;
+      }
+      if (selectedCriticality && alert.threat_level !== selectedCriticality) {
+        return false;
+      }
+      const createdMs = Date.parse(alert.created_at);
+      if (Number.isNaN(createdMs)) {
+        return true;
+      }
+      return now - createdMs <= maxAgeMs;
+    });
+  }, [alerts, durationFilterMs, selectedSourceName, selectedCriticality]);
+
+  const filteredItems = useMemo(() => {
+    const items = collectedItems || [];
+    return items.filter((item) => {
+      if (selectedSourceName && item.source_name !== selectedSourceName) {
+        return false;
+      }
+      if (selectedCriticality && item.threat_level !== selectedCriticality) {
+        return false;
+      }
+      return true;
+    });
+  }, [collectedItems, selectedSourceName, selectedCriticality]);
+
+  const combinedScannedSource = useMemo(() => {
+    const alertRows = filteredAlerts.map((alert) => ({
+      id: `alert-${alert.id}`,
+      kind: 'alert' as const,
+      title: alert.title,
+      text: alert.description || '',
+      sourceName: alert.source_name || alert.source || 'Unknown source',
+      sourceType: alert.source_type || 'unknown',
+      threatLevel: alert.threat_level,
+      threatScore: alert.threat_score,
+      when: alert.created_at,
+      url: alert.source?.startsWith('http') ? alert.source : null,
+      isResolved: alert.is_resolved,
+    }));
+
+    const itemRows = filteredItems.map((item) => ({
+      id: `item-${item.id}`,
+      kind: 'scan' as const,
+      title: item.title,
+      text: item.text || '',
+      sourceName: item.source_name,
+      sourceType: item.source_type,
+      threatLevel: item.threat_level,
+      threatScore: item.threat_score,
+      when: item.collected_at,
+      url: item.url,
+      isResolved: false,
+    }));
+
+    return [...alertRows, ...itemRows].sort(
+      (a, b) => Date.parse(b.when) - Date.parse(a.when),
+    );
+  }, [filteredAlerts, filteredItems]);
+
+  const scanSummary = useMemo(() => {
+    const data = runScanMutation.data as
+      | { sources_polled?: number; results?: Array<{ source?: string; fetched?: number; new?: number; error?: string }> }
+      | undefined;
+    if (!data) return null;
+
+    const results = data.results || [];
+    const fetchedTotal = results.reduce((sum, r) => sum + (typeof r.fetched === 'number' ? r.fetched : 0), 0);
+    const newTotal = results.reduce((sum, r) => sum + (typeof r.new === 'number' ? r.new : 0), 0);
+    const failed = results.filter((r) => !!r.error).length;
+
+    return {
+      polled: typeof data.sources_polled === 'number' ? data.sources_polled : 0,
+      fetchedTotal,
+      newTotal,
+      failed,
+    };
+  }, [runScanMutation.data]);
+
+  const handleResetData = () => {
+    const confirmed = window.confirm(
+      'Reset scanned data for your account? This will delete scanned items and alerts only. Your login and source settings will remain unchanged.',
+    );
+    if (!confirmed) {
+      return;
     }
+    resetDataMutation.mutate();
   };
-
-  const uniqueSubreddits = Array.from(new Set((posts || []).map((p) => p.subreddit))).sort();
-  const detail = selectedPost !== null ? (posts || []).find((p) => p.id === selectedPost) : null;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Intel feed</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Flagged content from monitored sources
+          <h2 className="text-2xl font-bold text-slate-900">Monitor</h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <select
+            value={durationFilterMs}
+            onChange={(e) => setDurationFilterMs(Number(e.target.value))}
+            className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            aria-label="Date range filter"
+          >
+            {DURATION_OPTIONS.map((opt) => (
+              <option key={opt.valueMs} value={opt.valueMs}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={selectedSourceName}
+            onChange={(e) => setSelectedSourceName(e.target.value)}
+            className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[200px]"
+            aria-label="Source filter"
+          >
+            <option value="">All Sources</option>
+            {sourceOptions.map((source) => (
+              <option key={source.id} value={source.name}>
+                {source.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={selectedCriticality}
+            onChange={(e) => setSelectedCriticality(e.target.value)}
+            className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[170px]"
+            aria-label="Criticality filter"
+          >
+            <option value="">All Criticality</option>
+            <option value="critical">CRITICAL</option>
+            <option value="high">HIGH</option>
+            <option value="medium">MEDIUM</option>
+            <option value="low">LOW</option>
+          </select>
+          <button
+            onClick={() => runScanMutation.mutate()}
+            disabled={runScanMutation.isLoading}
+            className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium disabled:opacity-50"
+          >
+            {runScanMutation.isLoading ? 'Running Scan...' : 'Run Scan Now'}
+          </button>
+          <button
+            onClick={handleResetData}
+            disabled={resetDataMutation.isLoading}
+            className="bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 text-sm font-medium disabled:opacity-50"
+          >
+            {resetDataMutation.isLoading ? 'Resetting...' : 'Clear History'}
+          </button>
+        </div>
+      </div>
+        </div>
+
+      {sourceOptions.length === 0 && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <p className="text-sm text-blue-800">No sources added yet. Add sources from Source Settings to filter alerts by source.</p>
+        </div>
+      )}
+
+      {scanSummary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-white border border-slate-300 rounded-lg p-3">
+            <p className="text-xs text-slate-600">Sources polled</p>
+            <p className="text-xl font-semibold text-slate-900">{scanSummary.polled}</p>
+          </div>
+          <div className="bg-white border border-slate-300 rounded-lg p-3">
+            <p className="text-xs text-slate-600">Fetched items</p>
+            <p className="text-xl font-semibold text-slate-900">{scanSummary.fetchedTotal}</p>
+          </div>
+          <div className="bg-white border border-slate-300 rounded-lg p-3">
+            <p className="text-xs text-slate-600">New items</p>
+            <p className="text-xl font-semibold text-slate-900">{scanSummary.newTotal}</p>
+          </div>
+          <div className="bg-white border border-slate-300 rounded-lg p-3">
+            <p className="text-xs text-slate-600">Failed sources</p>
+            <p className="text-xl font-semibold text-slate-900">{scanSummary.failed}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">Combined scanned source</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{combinedScannedSource.length}</p>
+        </div>
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">Alert records</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">
+            {filteredAlerts.length}
           </p>
         </div>
-        <button
-          onClick={() => scanMutation.mutate({})}
-          disabled={scanMutation.isLoading}
-          className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium disabled:opacity-50"
-        >
-          {scanMutation.isLoading ? 'Scanning...' : 'Run Scan Now'}
-        </button>
+        <div className="bg-white border border-slate-300 rounded-lg p-4">
+          <p className="text-sm text-slate-600">High/Critical (combined)</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">
+            {combinedScannedSource.filter((r) => r.threatLevel === 'high' || r.threatLevel === 'critical').length}
+          </p>
+        </div>
       </div>
 
-      {/* Search */}
-      <div className="bg-panel rounded-lg border border-edge p-4">
-        <form onSubmit={handleSearch} className="flex gap-3">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search Reddit for specific terms..."
-            className="flex-1 px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={searchMutation.isLoading || !searchQuery.trim()}
-            className="bg-slate-700 text-white py-2 px-4 rounded-md hover:bg-slate-600 text-sm font-medium disabled:opacity-50"
-          >
-            {searchMutation.isLoading ? 'Searching...' : 'Search Reddit'}
-          </button>
-        </form>
-      </div>
+      <div className="bg-white rounded-lg border border-slate-300 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-slate-900">Scanned Source</h3>
+          <span className="text-sm text-slate-600">
+            {runScanMutation.isLoading ? 'Scanning sources...' : 'Live from monitoring scans'}
+          </span>
+        </div>
 
-      {/* Search Results */}
-      {searchMutation.data && (
-        <div className="bg-panel rounded-lg border border-edge p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold">
-              Search Results for &quot;{searchMutation.data.query}&quot;
-              <span className="text-sm font-normal text-slate-500 ml-2">
-                ({searchMutation.data.total_results} results)
-              </span>
-            </h3>
-            <button
-              onClick={() => searchMutation.reset()}
-              className="text-sm text-slate-500 hover:text-slate-300"
-            >
-              Clear
-            </button>
+        {(alertsLoading || itemsLoading) ? (
+          <p className="text-slate-500 py-6 text-center">Loading scanned source data...</p>
+        ) : combinedScannedSource.length === 0 ? (
+          <div className="text-center py-8">
+            <h4 className="text-base font-semibold text-slate-900 mb-1">No scanned source data for selected filters</h4>
+            <p className="text-slate-600 text-sm">
+              Add active sources in Monitoring, then click Run Scan Now to populate this feed.
+            </p>
           </div>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {searchMutation.data.posts.map((post) => (
-              <div key={post.reddit_id} className="border border-edge rounded-lg p-3 hover:bg-panel-hover">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <a
-                      href={post.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm font-medium text-primary-600 hover:underline line-clamp-1"
-                    >
-                      {post.title}
-                    </a>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      r/{post.subreddit} · u/{post.author} · {post.score} pts
-                    </p>
-                    {post.text && (
-                      <p className="text-xs text-slate-400 mt-1 line-clamp-2">{post.text}</p>
-                    )}
+        ) : (
+          <div className="space-y-3 max-h-[560px] overflow-y-auto overflow-x-hidden">
+            {combinedScannedSource.map((item) => (
+              <div key={item.id} className={`p-3 border rounded-lg bg-white ${item.kind === 'alert' ? 'border-blue-200' : 'border-slate-200'}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <ThreatBadge level={item.threatLevel} />
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 uppercase tracking-wide">{item.sourceType}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wide ${item.kind === 'alert' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {item.kind === 'alert' ? 'Alert' : 'Scan'}
+                      </span>
+                      {item.isResolved && (
+                        <span className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wide bg-green-100 text-green-700">Resolved</span>
+                      )}
+                      <span className="text-xs text-slate-500 truncate">{item.sourceName}</span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900 break-words line-clamp-2">{item.title}</p>
+                    {item.text && <p className="text-xs text-slate-600 mt-1 break-words line-clamp-3">{item.text}</p>}
+                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-500 flex-wrap min-w-0">
+                      <span>Score: {item.threatScore.toFixed(3)}</span>
+                      <span>{item.kind === 'alert' ? 'Alerted' : 'Scanned'}: {formatDateTime(item.when)}</span>
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 hover:underline break-all max-w-full"
+                        >
+                          Open source
+                        </a>
+                      )}
+                    </div>
                   </div>
-                  <ThreatBadge level={post.threat_level} />
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="bg-panel rounded-lg border border-edge p-4">
-        <div className="flex flex-wrap gap-3 items-center">
-          <span className="text-sm font-medium text-slate-300">Filters:</span>
-          <select
-            value={threatFilter}
-            onChange={(e) => setThreatFilter(e.target.value)}
-            className="px-3 py-1.5 border border-slate-600 rounded-md text-sm bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="">All Threat Levels</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-          <select
-            value={subredditFilter}
-            onChange={(e) => setSubredditFilter(e.target.value)}
-            className="px-3 py-1.5 border border-slate-600 rounded-md text-sm bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="">All Subreddits</option>
-            {uniqueSubreddits.map((sub) => (
-              <option key={sub} value={sub}>r/{sub}</option>
-            ))}
-          </select>
-          <select
-            value={daysFilter}
-            onChange={(e) => setDaysFilter(Number(e.target.value))}
-            className="px-3 py-1.5 border border-slate-600 rounded-md text-sm bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value={7}>Last 7 days</option>
-            <option value={14}>Last 14 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
-          <span className="text-sm text-slate-500 ml-auto">
-            {posts?.length ?? 0} flagged posts
-          </span>
-        </div>
-      </div>
-
-      {/* Post Detail Modal */}
-      {detail && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center p-4" onClick={() => setSelectedPost(null)}>
-          <div className="bg-panel rounded-lg border border-edge shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-start mb-4">
-              <h3 className="text-lg font-semibold pr-4 text-slate-100">{detail.title}</h3>
-              <button onClick={() => setSelectedPost(null)} className="text-slate-500 hover:text-slate-300 text-xl">&times;</button>
-            </div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <ThreatBadge level={detail.threat_level} />
-              <span className="text-xs bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded">r/{detail.subreddit}</span>
-              <span className="text-xs bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded">u/{detail.author}</span>
-              <span className="text-xs bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded">{detail.score} pts · {detail.num_comments} comments</span>
-            </div>
-            <div className="mb-4">
-              <span className="text-sm font-medium text-slate-300">Threat Score: </span>
-              <span className="text-sm font-bold text-red-400">{(detail.threat_score * 100).toFixed(1)}%</span>
-            </div>
-            {detail.text && (
-              <div className="mb-4 bg-panel-alt rounded p-3">
-                <p className="text-sm text-slate-300 whitespace-pre-wrap">{detail.text}</p>
-              </div>
-            )}
-            {detail.analysis_details && (
-              <div className="mb-4">
-                <h4 className="text-sm font-medium mb-2 text-slate-300">Analysis Details</h4>
-                <pre className="text-xs bg-panel-alt rounded p-3 overflow-x-auto text-slate-400">
-                  {JSON.stringify(detail.analysis_details, null, 2)}
-                </pre>
-              </div>
-            )}
-            <div className="flex items-center justify-between pt-4 border-t border-edge">
-              <div className="text-xs text-slate-500">
-                {detail.posted_at && (
-                  <span>Posted: {(() => { try { return format(parseISO(detail.posted_at), 'MMM dd, yyyy HH:mm'); } catch { return detail.posted_at; } })()}</span>
-                )}
-                {detail.scanned_at && (
-                  <span className="ml-3">Scanned: {(() => { try { return format(parseISO(detail.scanned_at), 'MMM dd, yyyy HH:mm'); } catch { return detail.scanned_at; } })()}</span>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <a
-                  href={detail.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary-600 hover:underline"
-                >
-                  View on Reddit
-                </a>
-                {!detail.is_reviewed && (
-                  <button
-                    onClick={() => { markReviewed.mutate(detail.id); setSelectedPost(null); }}
-                    className="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
-                  >
-                    Mark Reviewed
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Posts Table */}
-      <div className="bg-panel rounded-lg border border-edge overflow-hidden">
-        {isLoading ? (
-          <p className="text-slate-500 text-center py-12">Loading flagged posts...</p>
-        ) : !posts || posts.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-slate-500">No flagged posts found.</p>
-            <p className="text-sm text-slate-600 mt-1">Run a scan to start detecting extremist content.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-700">
-              <thead className="bg-panel-alt">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Post</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Subreddit</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Threat</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Score</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700">
-                {posts.map((post) => (
-                  <tr key={post.id} className="hover:bg-panel-hover cursor-pointer" onClick={() => setSelectedPost(post.id)}>
-                    <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-slate-200 line-clamp-1 max-w-xs">{post.title}</p>
-                      <p className="text-xs text-slate-500">u/{post.author} · {post.score} pts · {post.num_comments} comments</p>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-slate-400">r/{post.subreddit}</td>
-                    <td className="px-4 py-3"><ThreatBadge level={post.threat_level} /></td>
-                    <td className="px-4 py-3 text-sm font-medium text-slate-200">{(post.threat_score * 100).toFixed(1)}%</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">
-                      {post.scanned_at
-                        ? (() => { try { return format(parseISO(post.scanned_at), 'MMM dd, HH:mm'); } catch { return 'N/A'; } })()
-                        : 'N/A'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        post.is_reviewed ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'
-                      }`}>
-                        {post.is_reviewed ? 'Reviewed' : 'Pending'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                        <a
-                          href={post.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-primary-600 hover:underline"
-                        >
-                          Reddit
-                        </a>
-                        {!post.is_reviewed && (
-                          <button
-                            onClick={() => markReviewed.mutate(post.id)}
-                            className="text-xs text-green-600 hover:underline"
-                          >
-                            Review
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         )}
       </div>

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from 'react-query';
 import { toast } from 'react-toastify';
 import { usersService } from '../services/users.service';
 import { useTrainModels, useTrainingStatus, useAvailableModels } from '../hooks/useDetection';
+import { formatDateTime } from '../utils/formatDate';
 
 const STATUS_COLOR: Record<string, { bg: string; color: string }> = {
   completed: { bg: '#DCFCE7', color: '#16A34A' },
@@ -78,7 +79,7 @@ const ModelTrainingPanel: React.FC = () => {
             </span>
             <span style={{ fontSize: 12, color: '#94A3B8' }}>Job: {activeJobId.slice(0, 12)}…</span>
             {statusInfo?.started_at && (
-              <span style={{ fontSize: 12, color: '#94A3B8' }}>Started: {new Date(statusInfo.started_at).toLocaleTimeString()}</span>
+              <span style={{ fontSize: 12, color: '#94A3B8' }}>Started: {formatDateTime(statusInfo.started_at)}</span>
             )}
           </div>
           {jobState === 'running' && (

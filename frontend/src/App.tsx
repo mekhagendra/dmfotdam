@@ -99,7 +99,7 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
-        path="/intel-feed"
+        path="/monitor"
         element={
           <ProtectedRoute>
             <Layout>
@@ -108,6 +108,7 @@ const AppRoutes: React.FC = () => {
           </ProtectedRoute>
         }
       />
+      <Route path="/intel-feed" element={<Navigate to="/monitor" replace />} />
       <Route
         path="/monitoring"
         element={

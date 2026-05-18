@@ -32,7 +32,7 @@ from app.core.database import (
     sources_col,
 )
 from app.core.logging import get_logger
-from app.services import reddit_collector, rss_collector, telegram_collector
+from app.services import rss_collector, telegram_collector
 from app.services.ml_service import MLService
 from app.services.web_scraper import WebScraper
 
@@ -86,8 +86,6 @@ async def _collect_source(source: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Dispatch to the right collector based on source.source_type."""
     stype = source.get("source_type")
     url = source.get("url", "")
-    if stype == "reddit":
-        return await reddit_collector.fetch_subreddit(url, limit=25)
     if stype == "rss":
         return await rss_collector.fetch_feed(url, source_type="rss", limit=30)
     if stype == "telegram":
@@ -120,12 +118,18 @@ async def _collect_source(source: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 async def _process_item(item: Dict[str, Any], source: Dict[str, Any]) -> None:
-    """Classify an item and persist it. Dedup by external_id."""
+    """Classify an item and persist it. Dedup by source_id + external_id."""
     if not item.get("text"):
         return
 
+    source_id = str(source.get("_id", ""))
+
     existing = await collected_items_col().find_one(
-        {"external_id": item["external_id"]}
+        {
+            "source_id": source_id,
+            "source_type": item.get("source_type"),
+            "external_id": item["external_id"],
+        }
     )
     if existing is not None:
         return  # already classified before
@@ -140,7 +144,7 @@ async def _process_item(item: Dict[str, Any], source: Dict[str, Any]) -> None:
         "threat_level": level,
         "classification": classification,
         "source_name": source.get("name"),
-        "source_id": str(source.get("_id", "")),
+        "source_id": source_id,
         "collected_at": datetime.now(timezone.utc),
     }
 
@@ -224,9 +228,14 @@ async def run_one_source(source: Dict[str, Any]) -> Dict[str, Any]:
     )
     items = await _collect_source(source)
     new_count = 0
+    source_id = str(source.get("_id", ""))
     for item in items:
         before = await collected_items_col().count_documents(
-            {"external_id": item["external_id"]}
+            {
+                "source_id": source_id,
+                "source_type": item.get("source_type"),
+                "external_id": item["external_id"],
+            }
         )
         await _process_item(item, source)
         if before == 0:
@@ -273,7 +282,7 @@ async def run_all_sources(owner_id: ObjectId | None = None) -> Dict[str, Any]:
 
 
 async def ensure_default_sources() -> None:
-    """On first boot, seed default Reddit subreddits + RSS feeds so the
+    """On first boot, seed default RSS feeds so the
     system starts producing data without requiring manual configuration.
     """
     existing = await sources_col().count_documents({})
@@ -281,25 +290,6 @@ async def ensure_default_sources() -> None:
         return
 
     defaults: List[Dict[str, Any]] = []
-
-    subs = [
-        s.strip()
-        for s in _settings.REDDIT_DEFAULT_SUBREDDITS.split(",")
-        if s.strip()
-    ]
-    for sub in subs:
-        defaults.append(
-            {
-                "name": f"Reddit r/{sub}",
-                "url": sub,
-                "source_type": "reddit",
-                "keywords": [],
-                "is_active": True,
-                "check_interval": _settings.COLLECTOR_INTERVAL_SECONDS,
-                "last_checked": None,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
 
     for feed in _settings.DEFAULT_RSS_FEEDS:
         defaults.append(

@@ -25,16 +25,16 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-  violence: '#dc2626',
-  extremism: '#b45309',
-  planning: '#1d4ed8',
-  financing: '#6d28d9',
+  high: '#dc2626',
+  medium: '#f59e0b',
+  low: '#16a34a',
+  unknown: '#6b7280',
 };
 
 const Dashboard: React.FC = () => {
   const { data: metrics, isLoading: metricsLoading } = useDashboardMetrics();
   const { data: alerts, isLoading: alertsLoading } = useAlerts();
-  const { connected } = useWebSocket();
+  useWebSocket();
   const queryClient = useQueryClient();
 
   const recentAlerts = (alerts ?? []).slice(0, 8);
@@ -95,18 +95,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* WebSocket status */}
-      <div className="flex justify-end items-center gap-2">
-        <span
-          className={`inline-block h-2.5 w-2.5 rounded-full ${
-            connected ? 'bg-green-500 animate-pulse' : 'bg-slate-500'
-          }`}
-        />
-        <span className={`text-xs font-medium ${connected ? 'text-green-400' : 'text-slate-500'}`}>
-          {connected ? 'LIVE' : 'Reconnecting\u2026'}
-        </span>
-      </div>
-
       {/* KPI Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Total Analyses */}
@@ -154,7 +142,7 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Category breakdown — horizontal bar chart */}
         <div className="bg-panel rounded-lg border border-edge p-6">
-          <h3 className="text-lg font-semibold mb-4 text-slate-100">Category Breakdown (24h)</h3>
+          <h3 className="text-lg font-semibold mb-4 text-slate-900">Threat Level Breakdown (24h)</h3>
           {categoryData.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={categoryData} layout="vertical" margin={{ left: 10 }}>
@@ -178,7 +166,7 @@ const Dashboard: React.FC = () => {
 
         {/* Alert distribution — donut chart */}
         <div className="bg-panel rounded-lg border border-edge p-6">
-          <h3 className="text-lg font-semibold mb-4 text-slate-100">Alert Distribution</h3>
+          <h3 className="text-lg font-semibold mb-4 text-slate-900">Alert Distribution</h3>
           {alertDistribution.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
@@ -208,7 +196,7 @@ const Dashboard: React.FC = () => {
 
       {/* Alert feed */}
       <div className="bg-panel rounded-lg border border-edge p-6">
-        <h3 className="text-lg font-semibold mb-4 text-slate-100">Recent Alerts</h3>
+        <h3 className="text-lg font-semibold mb-4 text-slate-900">Recent Alerts</h3>
         {alertsLoading ? (
           <p className="text-slate-500">Loading alerts...</p>
         ) : recentAlerts.length > 0 ? (
@@ -231,7 +219,7 @@ const Dashboard: React.FC = () => {
                   <div className="flex-1 min-w-0">
                     <p
                       className={`font-medium text-sm ${
-                        alert.is_resolved ? 'line-through text-slate-500' : 'text-slate-200'
+                        alert.is_resolved ? 'line-through text-slate-500' : 'text-slate-800'
                       }`}
                     >
                       {alert.title}
@@ -276,7 +264,7 @@ const Dashboard: React.FC = () => {
           {sourceEntries.map(([name, count]) => (
             <div key={name} className="bg-panel rounded-lg border border-edge p-4">
               <p className="text-xs font-medium uppercase text-slate-500">{name}</p>
-              <p className="text-xl font-bold mt-1 text-slate-100">{count}</p>
+              <p className="text-xl font-bold mt-1 text-slate-900">{count}</p>
               <div className="w-full bg-slate-700 rounded-full h-1.5 mt-2">
                 <div
                   className="bg-blue-500 h-1.5 rounded-full"

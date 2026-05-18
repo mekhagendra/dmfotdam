@@ -76,6 +76,7 @@ export interface AlertInfo {
   threat_level: string;
   threat_score: number;
   source: string | null;
+  source_name: string | null;
   source_type: string | null;
   is_read: boolean;
   is_resolved: boolean;
@@ -92,6 +93,39 @@ export interface MonitoringSource {
   check_interval: number;
   last_checked: string | null;
   created_at: string;
+}
+
+export interface SourceTrendPoint {
+  date: string;
+  source_id: string;
+  source_name: string;
+  source_type: string;
+  item_count: number;
+  avg_threat_score: number;
+}
+
+export interface SourceTrendResponse {
+  days: number;
+  points: SourceTrendPoint[];
+}
+
+export interface CollectedItem {
+  id: string;
+  source_id: string;
+  source_name: string;
+  source_type: string;
+  title: string;
+  text: string | null;
+  url: string | null;
+  threat_level: string;
+  threat_score: number;
+  collected_at: string;
+}
+
+export interface ResetScannedDataResult {
+  message: string;
+  alerts_deleted: number;
+  items_deleted: number;
 }
 
 export const detectionService = {
@@ -188,5 +222,20 @@ export const detectionService = {
   async getUnreadAlertCount(): Promise<number> {
     const response = await api.get<AlertInfo[]>('/monitoring/alerts');
     return response.data.filter(a => !a.is_read && !a.is_resolved).length;
+  },
+
+  async getSourceDailyTrends(days: number = 30): Promise<SourceTrendResponse> {
+    const response = await api.get<SourceTrendResponse>(`/monitoring/trends/source-daily?days=${days}`);
+    return response.data;
+  },
+
+  async getCollectedItems(days: number = 7, limit: number = 200): Promise<CollectedItem[]> {
+    const response = await api.get<CollectedItem[]>(`/monitoring/items?days=${days}&limit=${limit}`);
+    return response.data;
+  },
+
+  async resetScannedData(): Promise<ResetScannedDataResult> {
+    const response = await api.delete<ResetScannedDataResult>('/monitoring/data/reset');
+    return response.data;
   },
 };

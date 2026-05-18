@@ -99,7 +99,9 @@ const Analyse: React.FC = () => {
     try {
       uploadMutation.reset();
       const trainedIds = new Set(availableModels.filter((m) => m.available !== 'false').map((m) => m.id));
-      const models = selectedModels.includes('all') ? [] : selectedModels.filter((id) => trainedIds.has(id));
+      const models = selectedModels.includes('all')
+        ? ['all']
+        : selectedModels.filter((id) => trainedIds.has(id));
       const response = await uploadMutation.mutateAsync({ file: selectedFile, models });
       const result = await detectionService.getAnalysisResult(response.analysis_id);
       setDocumentReport(result);
@@ -111,7 +113,9 @@ const Analyse: React.FC = () => {
   const handleTextAnalysis = async () => {
     if (textInput.trim().length < 10) return;
     const trainedIds = new Set(availableModels.filter((m) => m.available !== 'false').map((m) => m.id));
-    const models = selectedModels.includes('all') ? undefined : selectedModels.filter((id) => trainedIds.has(id));
+    const models = selectedModels.includes('all')
+      ? ['all']
+      : selectedModels.filter((id) => trainedIds.has(id));
     const result = await analyzeMutation.mutateAsync({ text: textInput, model: 'distilbert', models });
     setAnalysisResult(result);
   };

@@ -17,9 +17,23 @@ from sklearn.metrics import classification_report, accuracy_score, f1_score
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
-DATASET_PATH = os.path.join(BACKEND_DIR, "data", "datasets", "extremisim.csv")
 MODEL_DIR = os.path.join(BACKEND_DIR, "data", "models")
 RANDOM_STATE = 42
+
+
+def resolve_dataset_path() -> str:
+    preferred = os.path.join(BACKEND_DIR, "data", "datasets", "training_dataset.csv")
+    legacy = os.path.join(BACKEND_DIR, "data", "datasets", "extremisim.csv")
+    if os.path.exists(preferred):
+        return preferred
+    if os.path.exists(legacy):
+        return legacy
+    raise FileNotFoundError(
+        f"Dataset not found. Checked: {preferred} and {legacy}"
+    )
+
+
+DATASET_PATH = resolve_dataset_path()
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 

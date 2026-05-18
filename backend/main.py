@@ -4,7 +4,7 @@ FastAPI entrypoint for the Terrorism Detection & Monitoring System.
 Startup flow:
   1. setup_logging()
   2. connect_to_mongo()
-  3. ensure_default_sources()        – seed Reddit + RSS feeds if empty
+  3. ensure_default_sources()        – seed RSS feeds if empty
   4. start the APScheduler job that polls every source on COLLECTOR_INTERVAL_SECONDS
 
 Shutdown flow:

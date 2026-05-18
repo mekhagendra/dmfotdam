@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useSources, useCreateSource, useDeleteSource, useAlerts, useRunScanNow } from '../hooks/useDetection';
+import { useSources, useCreateSource, useDeleteSource, useAlerts } from '../hooks/useDetection';
 import AlertList from '../components/AlertList';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,7 +32,6 @@ const Monitoring: React.FC = () => {
   const { data: alerts, isLoading: alertsLoading } = useAlerts();
   const createMutation = useCreateSource();
   const deleteMutation = useDeleteSource();
-  const scanMutation = useRunScanNow();
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<SourceFormData>({
     defaultValues: {
@@ -70,15 +69,6 @@ const Monitoring: React.FC = () => {
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-slate-100">Monitoring Sources</h2>
           <div className="flex items-center gap-2">
-            {!isAdmin && (
-              <button
-                onClick={() => scanMutation.mutate()}
-                disabled={scanMutation.isLoading}
-                className="bg-slate-700 text-slate-100 py-2 px-4 rounded-md hover:bg-slate-600 disabled:opacity-50 text-sm font-medium"
-              >
-                {scanMutation.isLoading ? 'Scanning...' : 'Run Scan Now'}
-              </button>
-            )}
             {!isAdmin && (
               <button
                 onClick={() => setShowForm(!showForm)}

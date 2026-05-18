@@ -29,6 +29,7 @@ class AlertPublic(BaseModel):
     threat_level: str
     threat_score: float
     source: Optional[str] = None
+    source_name: Optional[str] = None
     source_type: Optional[str] = None
     is_read: bool
     is_resolved: bool

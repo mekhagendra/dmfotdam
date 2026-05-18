@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useSourceDailyTrends, useSources } from '../hooks/useDetection';
+import { Card, KPITile, PageHeader, LiveIndicator, EmptyState } from '../components/ui';
 
 const SOURCE_COLORS = [
   '#2563EB',
@@ -17,7 +18,7 @@ const Trends: React.FC = () => {
   const [days, setDays] = useState(30);
   const [selectedSourceId, setSelectedSourceId] = useState<string>('');
   const { data: sources = [] } = useSources();
-  const { data: trendData, isLoading } = useSourceDailyTrends(days);
+  const { data: trendData, isLoading, dataUpdatedAt } = useSourceDailyTrends(days);
 
   const sourceMap = useMemo(() => {
     return new Map(sources.map((s) => [s.id, s]));
@@ -72,20 +73,20 @@ const Trends: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Source Trends</h2>
-            <p className="text-sm text-slate-600 mt-1">
-              Daily trend analysis for user-added monitoring sources. One line per source.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+      <PageHeader
+        title="Source Trends"
+        subtitle={
+          <>
+            <span>Daily trend analysis for user-added monitoring sources. One line per source.</span>
+            <LiveIndicator dataUpdatedAt={dataUpdatedAt} />
+          </>
+        }
+        actions={
+          <>
             <select
               value={days}
               onChange={(e) => setDays(Number(e.target.value))}
-              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="h-9 px-3 text-sm border border-slate-200 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
               aria-label="Days filter"
             >
               <option value={7}>Last 7 days</option>
@@ -93,11 +94,10 @@ const Trends: React.FC = () => {
               <option value={30}>Last 30 days</option>
               <option value={90}>Last 90 days</option>
             </select>
-
             <select
               value={selectedSourceId}
               onChange={(e) => setSelectedSourceId(e.target.value)}
-              className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[220px]"
+              className="h-9 px-3 text-sm border border-slate-200 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[200px]"
               aria-label="Source filter"
             >
               <option value="">All Added Sources</option>
@@ -107,42 +107,35 @@ const Trends: React.FC = () => {
                 </option>
               ))}
             </select>
-          </div>
-        </div>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPITile label="Active series" value={sourceSeries.length} accent="blue" />
+        <KPITile label="Days displayed" value={dateLabels.length} accent="purple" />
+        <KPITile
+          label="Overall avg threat"
+          value={<span className="font-mono">{overallAvgThreatScore.toFixed(3)}</span>}
+          accent="amber"
+        />
+        <KPITile
+          label="Peak daily avg"
+          value={<span className="font-mono">{peakAvgThreatScore.toFixed(3)}</span>}
+          accent="red"
+        />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white border border-slate-300 rounded-lg p-4">
-          <p className="text-sm text-slate-600">Active series</p>
-          <p className="text-2xl font-semibold text-slate-900 mt-1">{sourceSeries.length}</p>
-        </div>
-        <div className="bg-white border border-slate-300 rounded-lg p-4">
-          <p className="text-sm text-slate-600">Days displayed</p>
-          <p className="text-2xl font-semibold text-slate-900 mt-1">{dateLabels.length}</p>
-        </div>
-        <div className="bg-white border border-slate-300 rounded-lg p-4">
-          <p className="text-sm text-slate-600">Overall avg threat score</p>
-          <p className="text-2xl font-semibold text-slate-900 mt-1">{overallAvgThreatScore.toFixed(3)}</p>
-        </div>
-        <div className="bg-white border border-slate-300 rounded-lg p-4">
-          <p className="text-sm text-slate-600">Peak daily avg score</p>
-          <p className="text-2xl font-semibold text-slate-900 mt-1">{peakAvgThreatScore.toFixed(3)}</p>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg border border-slate-300 p-4 sm:p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-slate-900">Daily Source Trend (Average Threat Score)</h3>
-          <span className="text-sm text-slate-600">X-axis: Day | Y-axis: Average threat score (0-1)</span>
-        </div>
-
-        {isLoading ? (
-          <p className="text-slate-500 py-10 text-center">Loading trends...</p>
-        ) : chartData.length === 0 ? (
-          <div className="text-center py-10">
-            <h4 className="text-base font-semibold text-slate-900 mb-1">No trend data available</h4>
-            <p className="text-sm text-slate-600">Add sources and run scans to generate daily trends.</p>
-          </div>
+      <Card
+        title="Daily Source Trend (Average Threat Score)"
+        subtitle="X-axis: Day · Y-axis: Average threat score (0–1)"
+        loading={isLoading}
+      >
+        {chartData.length === 0 ? (
+          <EmptyState
+            title="No trend data available"
+            description="Add sources and run scans to generate daily trends."
+          />
         ) : (
           <div className="w-full h-[420px] sm:h-[500px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -180,7 +173,7 @@ const Trends: React.FC = () => {
             </ResponsiveContainer>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 };

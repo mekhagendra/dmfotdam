@@ -1,9 +1,6 @@
-import React from 'react';
-import { useDashboardMetrics, useAlerts } from '../hooks/useDetection';
-import { useWebSocket } from '../hooks/useWebSocket';
-import { detectionService, AlertInfo } from '../services/detection.service';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from 'react-query';
-import { formatDateTime } from '../utils/formatDate';
 import {
   BarChart,
   Bar,
@@ -14,266 +11,686 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
+  CartesianGrid,
 } from 'recharts';
+import {
+  useDashboardMetrics,
+  useAlerts,
+  useReports,
+  useSources,
+  useRunScanNow,
+} from '../hooks/useDetection';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { useAuth } from '../context/AuthContext';
+import { detectionService, AlertInfo } from '../services/detection.service';
+import { formatDateTime } from '../utils/formatDate';
+import {
+  Card,
+  KPITile,
+  PageHeader,
+  LiveIndicator,
+  FilterBar,
+  EmptyState,
+  SeverityRail,
+  SeverityBadge,
+  SEVERITY_STYLES,
+  normalizeSeverity,
+  SeverityLevel,
+} from '../components/ui';
+import { SHORTCUT_EVENTS } from '../hooks/useKeyboardShortcuts';
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: '#ef4444',
-  high: '#f97316',
-  medium: '#eab308',
-  low: '#3b82f6',
-};
+const SOURCE_COLORS = [
+  '#3B82F6',
+  '#10B981',
+  '#F59E0B',
+  '#8B5CF6',
+  '#EF4444',
+  '#0EA5E9',
+  '#EC4899',
+  '#64748B',
+];
 
-const CATEGORY_COLORS: Record<string, string> = {
-  high: '#dc2626',
-  medium: '#f59e0b',
-  low: '#16a34a',
-  unknown: '#6b7280',
-};
+const TIME_RANGE_OPTIONS = [
+  { value: '1h', label: 'Last 1h', ms: 60 * 60 * 1000 },
+  { value: '24h', label: 'Last 24h', ms: 24 * 60 * 60 * 1000 },
+  { value: '7d', label: 'Last 7d', ms: 7 * 24 * 60 * 60 * 1000 },
+  { value: '30d', label: 'Last 30d', ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
+const SEVERITY_ORDER: SeverityLevel[] = ['low', 'medium', 'high', 'critical'];
+
+function bucketByHour(alerts: AlertInfo[], windowMs: number): Array<{
+  hour: string;
+  low: number;
+  medium: number;
+  high: number;
+  critical: number;
+}> {
+  const now = Date.now();
+  const start = now - windowMs;
+  // Always 24 hourly buckets covering the last 24h (independent of range).
+  const buckets: Array<{ hour: string; low: number; medium: number; high: number; critical: number }> = [];
+  const windowMsClamped = Math.max(windowMs, 60 * 60 * 1000); // at least 1h
+  const slotMs = windowMsClamped / 24;
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(start + i * slotMs);
+    buckets.push({
+      hour: `${d.getHours().toString().padStart(2, '0')}:00`,
+      low: 0,
+      medium: 0,
+      high: 0,
+      critical: 0,
+    });
+  }
+  for (const a of alerts) {
+    const t = Date.parse(a.created_at);
+    if (!Number.isFinite(t) || t < start || t > now) continue;
+    const idx = Math.min(23, Math.floor((t - start) / slotMs));
+    const lvl = normalizeSeverity(a.threat_level);
+    buckets[idx][lvl] += 1;
+  }
+  return buckets;
+}
+
+function hourlyAnalysesSpark(items: Array<{ created_at: string }>): number[] {
+  // 24 hourly buckets across last 24h — used for the Analyses tile sparkline.
+  const now = Date.now();
+  const start = now - 24 * 60 * 60 * 1000;
+  const buckets = new Array<number>(24).fill(0);
+  for (const it of items) {
+    const t = Date.parse(it.created_at);
+    if (!Number.isFinite(t) || t < start || t > now) continue;
+    const idx = Math.min(23, Math.floor((t - start) / (60 * 60 * 1000)));
+    buckets[idx] += 1;
+  }
+  return buckets;
+}
 
 const Dashboard: React.FC = () => {
-  const { data: metrics, isLoading: metricsLoading } = useDashboardMetrics();
-  const { data: alerts, isLoading: alertsLoading } = useAlerts();
-  useWebSocket();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
-  const recentAlerts = (alerts ?? []).slice(0, 8);
+  const [timeRange, setTimeRange] = useState<string>('24h');
+  const [filterSeverity, setFilterSeverity] = useState<string>('');
+  const [filterSource, setFilterSource] = useState<string>('');
+  const [filterSearch, setFilterSearch] = useState<string>('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const hasNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  useEffect(() => {
+    const handler = () => searchInputRef.current?.focus();
+    window.addEventListener(SHORTCUT_EVENTS.focusSearch, handler);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, handler);
+  }, []);
 
-  // Category breakdown data for horizontal bar chart
-  const categoryData = Object.entries(metrics?.category_breakdown ?? {}).map(
-    ([name, value]) => ({ name, value }),
+  const {
+    data: metrics,
+    isLoading: metricsLoading,
+    dataUpdatedAt: metricsUpdatedAt,
+  } = useDashboardMetrics();
+  const {
+    data: alerts,
+    isLoading: alertsLoading,
+    dataUpdatedAt: alertsUpdatedAt,
+  } = useAlerts();
+  const { data: reports } = useReports();
+  const { data: sources } = useSources();
+  const runScanMutation = useRunScanNow();
+  useWebSocket();
+
+  const allAlerts: AlertInfo[] = useMemo(() => alerts ?? [], [alerts]);
+
+  const windowMs = useMemo(
+    () => TIME_RANGE_OPTIONS.find((r) => r.value === timeRange)?.ms ?? 24 * 60 * 60 * 1000,
+    [timeRange],
   );
 
-  // Alert distribution data for donut chart
-  const alertDistribution = [
-    { name: 'Critical', value: metrics?.critical_alerts, color: SEVERITY_COLORS.critical },
-    { name: 'High', value: metrics?.high_alerts, color: SEVERITY_COLORS.high },
-    { name: 'Medium', value: metrics?.medium_alerts, color: SEVERITY_COLORS.medium },
-    { name: 'Low', value: metrics?.low_alerts, color: SEVERITY_COLORS.low },
-  ].filter((d) => hasNumber(d.value) && d.value > 0) as Array<{
-    name: string;
-    value: number;
-    color: string;
-  }>;
+  const alertsInWindow = useMemo(() => {
+    const cutoff = Date.now() - windowMs;
+    return allAlerts.filter((a) => {
+      const t = Date.parse(a.created_at);
+      return Number.isFinite(t) && t >= cutoff;
+    });
+  }, [allAlerts, windowMs]);
 
-  // Source breakdown
-  // Source breakdown — ensure preferred order: reddit, upload, text, then rest
-  const SOURCE_ORDER: Record<string, number> = { reddit: 0, upload: 1, text: 2 };
-  const sourceEntries = Object.entries(metrics?.source_breakdown ?? {}).sort(
-    ([a], [b]) => (SOURCE_ORDER[a] ?? 99) - (SOURCE_ORDER[b] ?? 99),
+  // ----- KPI derivations -----
+
+  const totalAnalyses = metrics?.total_analyses ?? 0;
+  const analysesToday = metrics?.analyses_today ?? 0;
+  const criticalAlerts = metrics?.critical_alerts ?? 0;
+  const avgThreatScore = metrics?.avg_threat_score ?? 0;
+  const trend24h = metrics?.threat_trend_24h ?? null;
+  const activeSources = metrics?.active_sources ?? 0;
+
+  const unreadCount = useMemo(
+    () => allAlerts.filter((a) => !a.is_read && !a.is_resolved).length,
+    [allAlerts],
   );
-  const maxSourceCount = sourceEntries.length > 0 ? Math.max(...sourceEntries.map(([, v]) => v)) : 0;
+  const openCount = useMemo(
+    () => allAlerts.filter((a) => !a.is_resolved).length,
+    [allAlerts],
+  );
 
-  const handleAcknowledge = async (id: string) => {
+  // Sparkline for "Total Analyses" — derive from alerts in last 24h.
+  // (Closest proxy without a new API; falls back to flat if no data.)
+  const analysesSpark = useMemo(
+    () => hourlyAnalysesSpark(allAlerts),
+    [allAlerts],
+  );
+
+  const sourceBreakdownSummary = useMemo(() => {
+    const entries = Object.entries(metrics?.source_breakdown ?? {});
+    if (entries.length === 0) return '—';
+    return entries
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `${count} ${name}`)
+      .join(' · ');
+  }, [metrics?.source_breakdown]);
+
+  const allSourcesActive = useMemo(() => {
+    const list = sources ?? [];
+    return list.length > 0 && list.every((s) => s.is_active);
+  }, [sources]);
+
+  // ----- Chart data -----
+
+  const stackedHourly = useMemo(
+    () => bucketByHour(alertsInWindow, windowMs),
+    [alertsInWindow, windowMs],
+  );
+
+  const severityMixData = useMemo(() => {
+    const counts: Record<SeverityLevel, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    };
+    for (const a of allAlerts) {
+      if (a.is_resolved) continue;
+      counts[normalizeSeverity(a.threat_level)] += 1;
+    }
+    return (Object.keys(counts) as SeverityLevel[]).map((lvl) => ({
+      name: lvl,
+      value: counts[lvl],
+      color: SEVERITY_STYLES[lvl].accent,
+    }));
+  }, [allAlerts]);
+
+  const totalOpenAlerts = severityMixData.reduce((s, d) => s + d.value, 0);
+
+  const sourceBars = useMemo(() => {
+    const entries = Object.entries(metrics?.source_breakdown ?? {}).sort(
+      (a, b) => b[1] - a[1],
+    );
+    const max = entries.length > 0 ? entries[0][1] : 0;
+    return entries.map(([name, count], idx) => ({
+      name,
+      count,
+      max,
+      color: SOURCE_COLORS[idx % SOURCE_COLORS.length],
+    }));
+  }, [metrics?.source_breakdown]);
+
+  // ----- Keywords strip -----
+  const topKeywords = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of reports ?? []) {
+      for (const kw of r.keywords ?? []) {
+        const key = kw.trim().toLowerCase();
+        if (!key) continue;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+  }, [reports]);
+
+  // ----- Alert stream filtering -----
+
+  const sourceOptions = useMemo(
+    () =>
+      (sources ?? []).map((s) => ({ value: s.name, label: s.name })),
+    [sources],
+  );
+
+  const filteredStream = useMemo(() => {
+    const s = filterSearch.trim().toLowerCase();
+    return allAlerts
+      .filter((a) => {
+        if (filterSeverity && normalizeSeverity(a.threat_level) !== filterSeverity) {
+          return false;
+        }
+        if (filterSource && a.source_name !== filterSource) return false;
+        if (s) {
+          const hay = `${a.title} ${a.description ?? ''} ${a.source ?? ''}`.toLowerCase();
+          if (!hay.includes(s)) return false;
+        }
+        return true;
+      })
+      .slice(0, 8);
+  }, [allAlerts, filterSeverity, filterSource, filterSearch]);
+
+  // ----- Actions -----
+
+  const handleAck = async (id: string) => {
     try {
       await detectionService.markAlertRead(id);
       queryClient.invalidateQueries('alerts');
     } catch {
-      // handled by interceptor
+      /* handled */
     }
   };
-
   const handleResolve = async (id: string) => {
     try {
       await detectionService.resolveAlert(id);
       queryClient.invalidateQueries('alerts');
     } catch {
-      // handled by interceptor
+      /* handled */
     }
   };
 
-  const trendValue = hasNumber(metrics?.threat_trend_24h) ? metrics?.threat_trend_24h : undefined;
-  const trendPositive = typeof trendValue === 'number' && trendValue > 0;
-  const trendNeutral = typeof trendValue === 'number' && trendValue === 0;
-  const totalAnalyses = hasNumber(metrics?.total_analyses) ? metrics?.total_analyses : undefined;
-  const analysesToday = hasNumber(metrics?.analyses_today) ? metrics?.analyses_today : undefined;
-  const criticalAlerts = hasNumber(metrics?.critical_alerts) ? metrics?.critical_alerts : undefined;
-  const avgThreatScore = hasNumber(metrics?.avg_threat_score) ? metrics?.avg_threat_score : undefined;
-
+  // ----- Render -----
 
   return (
     <div className="space-y-6">
-      {/* KPI Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* Total Analyses */}
-        <div className="rounded-lg border p-4 bg-blue-500/10 text-blue-400 border-blue-500/20">
-          <p className="text-sm font-medium opacity-80">Total Analyses</p>
-          <p className="text-2xl font-bold mt-1">
-            {metricsLoading ? '...' : totalAnalyses ?? ''}
-          </p>
-          {!metricsLoading && typeof analysesToday === 'number' && analysesToday > 0 && (
-            <p className="text-xs mt-1 text-blue-400">+{analysesToday} today</p>
-          )}
-        </div>
-
-        {/* Critical Alerts */}
-        <div className="rounded-lg border p-4 bg-red-500/10 text-red-400 border-red-500/20">
-          <p className="text-sm font-medium opacity-80">Critical Alerts</p>
-          <p className="text-2xl font-bold mt-1">
-            {metricsLoading ? '...' : criticalAlerts ?? ''}
-          </p>
-          {!metricsLoading && trendPositive && (
-            <p className="text-xs mt-1 text-red-400">Threat rising</p>
-          )}
-        </div>
-
-        {/* Avg Threat Score */}
-        <div className="rounded-lg border p-4 bg-purple-500/10 text-purple-400 border-purple-500/20">
-          <p className="text-sm font-medium opacity-80">Avg Threat Score</p>
-          <p className="text-2xl font-bold mt-1">
-            {metricsLoading ? '...' : typeof avgThreatScore === 'number' ? avgThreatScore.toFixed(3) : ''}
-          </p>
-          {!metricsLoading && typeof trendValue === 'number' && !trendNeutral && (
-            <p
-              className={`text-xs mt-1 ${trendPositive ? 'text-red-400' : 'text-green-400'}`}
+      <PageHeader
+        title="Operations Overview"
+        subtitle={
+          <>
+            <span>Real-time threat detection across all monitored sources</span>
+            <LiveIndicator dataUpdatedAt={metricsUpdatedAt} />
+          </>
+        }
+        actions={
+          <>
+            <select
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value)}
+              className="h-9 px-3 text-sm border border-slate-200 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              aria-label="Time range"
             >
-              {trendPositive ? '\u25B2' : '\u25BC'}{' '}
-              {Math.abs(trendValue).toFixed(4)} (24h)
-            </p>
-          )}
-        </div>
+              {TIME_RANGE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => runScanMutation.mutate()}
+              disabled={runScanMutation.isLoading}
+              className="h-9 px-3 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-md disabled:opacity-50"
+            >
+              ↻ {runScanMutation.isLoading ? 'Scanning…' : 'Run scan now'}
+            </button>
+          </>
+        }
+      />
 
-
+      {/* Row 1 — KPI tiles */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPITile
+          label="Total Analyses"
+          value={totalAnalyses.toLocaleString()}
+          accent="blue"
+          loading={metricsLoading}
+          delta={
+            analysesToday > 0
+              ? {
+                  value: analysesToday,
+                  label: `+${analysesToday} today`,
+                  direction: 'up',
+                  semantic: 'neutral',
+                }
+              : undefined
+          }
+          sparklineData={analysesSpark}
+        />
+        <KPITile
+          label="Critical Alerts"
+          value={criticalAlerts}
+          accent="red"
+          loading={metricsLoading}
+          hint={
+            <>
+              <span className="font-mono">{unreadCount}</span> unacknowledged ·{' '}
+              <span className="font-mono">{openCount}</span> open
+            </>
+          }
+        />
+        <KPITile
+          label="Avg Threat Score"
+          value={<span className="font-mono">{avgThreatScore.toFixed(3)}</span>}
+          accent="purple"
+          loading={metricsLoading}
+          delta={
+            typeof trend24h === 'number' && trend24h !== 0
+              ? {
+                  value: trend24h,
+                  label: `${trend24h > 0 ? '+' : ''}${trend24h.toFixed(4)}`,
+                  direction: trend24h > 0 ? 'up' : 'down',
+                  semantic: trend24h > 0 ? 'negative' : 'positive',
+                }
+              : undefined
+          }
+          hint="vs prev 24h"
+        />
+        <KPITile
+          label="Active Sources"
+          value={activeSources}
+          accent="green"
+          loading={metricsLoading}
+          hint={sourceBreakdownSummary}
+          delta={
+            allSourcesActive
+              ? {
+                  value: 1,
+                  label: 'All healthy',
+                  direction: 'neutral',
+                  semantic: 'positive',
+                }
+              : undefined
+          }
+        />
       </div>
 
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Category breakdown — horizontal bar chart */}
-        <div className="bg-panel rounded-lg border border-edge p-6">
-          <h3 className="text-lg font-semibold mb-4 text-slate-900">Threat Level Breakdown (24h)</h3>
-          {categoryData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={categoryData} layout="vertical" margin={{ left: 10 }}>
-                <XAxis type="number" />
-                <YAxis type="category" dataKey="name" width={80} />
-                <Tooltip />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                  {categoryData.map((entry) => (
-                    <Cell
-                      key={entry.name}
-                      fill={CATEGORY_COLORS[entry.name] ?? '#6b7280'}
+      {/* Row 2 — Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card
+          title="Threat activity (24h)"
+          subtitle="Hourly volume stacked by severity"
+          className="lg:col-span-2"
+          loading={alertsLoading}
+        >
+          {stackedHourly.length > 0 ? (
+            <div className="h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stackedHourly} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                  <XAxis
+                    dataKey="hour"
+                    tick={{ fill: '#64748B', fontSize: 11 }}
+                    interval={5}
+                  />
+                  <YAxis tick={{ fill: '#64748B', fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip />
+                  {SEVERITY_ORDER.map((lvl) => (
+                    <Bar
+                      key={lvl}
+                      dataKey={lvl}
+                      stackId="severity"
+                      fill={SEVERITY_STYLES[lvl].accent}
+                      name={lvl.charAt(0).toUpperCase() + lvl.slice(1)}
                     />
                   ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
-            <p className="text-slate-500 text-center py-12">No category data yet</p>
+            <EmptyState title="No activity in this window" description="Alerts will appear here as they arrive." />
           )}
-        </div>
+        </Card>
 
-        {/* Alert distribution — donut chart */}
-        <div className="bg-panel rounded-lg border border-edge p-6">
-          <h3 className="text-lg font-semibold mb-4 text-slate-900">Alert Distribution</h3>
-          {alertDistribution.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={alertDistribution}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={90}
-                  paddingAngle={3}
-                  dataKey="value"
-                  nameKey="name"
-                >
-                  {alertDistribution.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Legend />
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="text-slate-500 text-center py-12">No alerts to display</p>
-          )}
-        </div>
-      </div>
-
-      {/* Alert feed */}
-      <div className="bg-panel rounded-lg border border-edge p-6">
-        <h3 className="text-lg font-semibold mb-4 text-slate-900">Recent Alerts</h3>
-        {alertsLoading ? (
-          <p className="text-slate-500">Loading alerts...</p>
-        ) : recentAlerts.length > 0 ? (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {recentAlerts.map((alert: AlertInfo) => {
-              const dotColor = SEVERITY_COLORS[alert.threat_level] ?? '#6b7280';
-              return (
-                <div
-                  key={alert.id}
-                  className={`flex items-start gap-3 p-3 border border-edge rounded-lg ${
-                    alert.is_resolved ? 'opacity-50' : ''
-                  }`}
-                >
-                  {/* Severity dot */}
-                  <span
-                    className="mt-1.5 inline-block h-3 w-3 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: dotColor }}
-                  />
-
-                  <div className="flex-1 min-w-0">
-                    <p
-                      className={`font-medium text-sm ${
-                        alert.is_resolved ? 'line-through text-slate-500' : 'text-slate-800'
-                      }`}
+        <Card title="Severity mix" subtitle="Open alerts" loading={alertsLoading}>
+          {totalOpenAlerts > 0 ? (
+            <>
+              <div className="relative h-[180px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={severityMixData.filter((d) => d.value > 0)}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                      nameKey="name"
+                      onClick={(entry: any) =>
+                        navigate(`/monitoring?severity=${entry?.name ?? ''}`)
+                      }
+                      style={{ cursor: 'pointer' }}
                     >
-                      {alert.title}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {alert.source && <span>{alert.source} &middot; </span>}
-                      {formatDateTime(alert.created_at)} &middot; Score:{' '}
-                      {alert.threat_score.toFixed(3)}
-                    </p>
-                  </div>
-
-                  <div className="flex gap-1 flex-shrink-0">
-                    {!alert.is_read && (
-                      <button
-                        onClick={() => handleAcknowledge(alert.id)}
-                        className="text-xs px-2 py-1 rounded bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
-                      >
-                        Acknowledge
-                      </button>
-                    )}
-                    {!alert.is_resolved && (
-                      <button
-                        onClick={() => handleResolve(alert.id)}
-                        className="text-xs px-2 py-1 rounded bg-green-500/15 text-green-400 hover:bg-green-500/25"
-                      >
-                        Resolve
-                      </button>
-                    )}
-                  </div>
+                      {severityMixData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <p className="text-xs text-slate-500">Open</p>
+                  <p className="text-2xl font-bold text-slate-900 font-mono">{totalOpenAlerts}</p>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-slate-500">No alerts at this time.</p>
-        )}
+              </div>
+              <ul className="mt-3 space-y-1 text-xs">
+                {severityMixData.map((d) => {
+                  const pct = totalOpenAlerts > 0 ? Math.round((d.value / totalOpenAlerts) * 100) : 0;
+                  return (
+                    <li
+                      key={d.name}
+                      className="flex items-center justify-between hover:bg-slate-50 rounded px-1 py-0.5 cursor-pointer"
+                      onClick={() => navigate(`/monitoring?severity=${d.name}`)}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-2 w-2 rounded-full"
+                          style={{ backgroundColor: d.color }}
+                        />
+                        <span className="capitalize text-slate-700">{d.name}</span>
+                      </span>
+                      <span className="font-mono text-slate-600">
+                        {d.value} · {pct}%
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : (
+            <EmptyState title="No open alerts" description="All clear right now." />
+          )}
+        </Card>
       </div>
 
-      {/* Source breakdown mini cards */}
-      {sourceEntries.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {sourceEntries.map(([name, count]) => (
-            <div key={name} className="bg-panel rounded-lg border border-edge p-4">
-              <p className="text-xs font-medium uppercase text-slate-500">{name}</p>
-              <p className="text-xl font-bold mt-1 text-slate-900">{count}</p>
-              <div className="w-full bg-slate-700 rounded-full h-1.5 mt-2">
+      {/* Row 3 — Source breakdown + Model health */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card
+          title="Source breakdown"
+          subtitle="Items collected (24h)"
+          className="lg:col-span-2"
+          loading={metricsLoading}
+        >
+          {sourceBars.length > 0 ? (
+            <ul className="space-y-3">
+              {sourceBars.map((s) => {
+                const pct = s.max > 0 ? Math.round((s.count / s.max) * 100) : 0;
+                return (
+                  <li
+                    key={s.name}
+                    className="cursor-pointer group"
+                    onClick={() => navigate(`/monitor?source=${encodeURIComponent(s.name)}`)}
+                  >
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="text-slate-700 group-hover:text-primary-600 capitalize">
+                        {s.name}
+                      </span>
+                      <span className="font-mono text-slate-600">{s.count}</span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${pct}%`, backgroundColor: s.color }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <EmptyState title="No source activity" description="Add sources from Monitoring to see breakdowns." />
+          )}
+        </Card>
+
+        <Card title="Detection model" loading={metricsLoading}>
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-wide">Active</p>
+              <p className="text-base font-semibold text-slate-900">
+                {metrics?.active_model ?? '—'}
+              </p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-slate-500 uppercase tracking-wide">F1 score</span>
+                <span className="font-mono text-slate-700">
+                  {metrics?.model_f1 != null ? metrics.model_f1.toFixed(3) : '—'}
+                </span>
+              </div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                 <div
-                  className="bg-blue-500 h-1.5 rounded-full"
-                  style={{ width: `${maxSourceCount > 0 ? Math.round((count / maxSourceCount) * 100) : 0}%` }}
+                  className="h-full bg-primary-500 rounded-full"
+                  style={{
+                    width: `${
+                      metrics?.model_f1 != null ? Math.round(metrics.model_f1 * 100) : 0
+                    }%`,
+                  }}
                 />
               </div>
             </div>
-          ))}
-        </div>
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-wide">Last trained</p>
+              {/* TODO: backend does not yet expose `model_trained_at`; surface a static dash. */}
+              <p className="text-sm text-slate-700">—</p>
+            </div>
+            {user?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => navigate('/admin/users')}
+                className="w-full text-sm py-1.5 border border-primary-600 text-primary-600 rounded hover:bg-primary-50"
+              >
+                View training
+              </button>
+            )}
+          </div>
+        </Card>
+      </div>
+
+      {/* Row 4 — Live alert stream */}
+      <Card
+        title={
+          <span className="flex items-center gap-3">
+            Live alert stream
+            <LiveIndicator dataUpdatedAt={alertsUpdatedAt} />
+          </span>
+        }
+        action={
+          <button
+            type="button"
+            onClick={() => navigate('/monitoring')}
+            className="text-xs text-primary-600 hover:underline"
+          >
+            View all →
+          </button>
+        }
+      >
+        <FilterBar
+          severity={filterSeverity}
+          source={filterSource}
+          search={filterSearch}
+          onSeverityChange={setFilterSeverity}
+          onSourceChange={setFilterSource}
+          onSearchChange={setFilterSearch}
+          sourceOptions={sourceOptions}
+          searchInputRef={searchInputRef}
+          className="mb-3"
+        />
+        {alertsLoading ? (
+          <div className="space-y-2">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-12 bg-slate-100 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : filteredStream.length > 0 ? (
+          <ul className="space-y-1">
+            {filteredStream.map((a) => {
+              const lvl = normalizeSeverity(a.threat_level);
+              return (
+                <li
+                  key={a.id}
+                  className={`flex items-stretch border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors overflow-hidden ${
+                    a.is_resolved ? 'opacity-60' : ''
+                  }`}
+                >
+                  <SeverityRail level={lvl} />
+                  <div className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2">
+                    <SeverityBadge level={lvl} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm text-slate-900 truncate">{a.title}</p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {a.source_name ?? a.source ?? 'Unknown'} · {formatDateTime(a.created_at)} ·
+                        <span className="font-mono"> score {a.threat_score.toFixed(3)}</span>
+                      </p>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                      {!a.is_read && (
+                        <button
+                          type="button"
+                          onClick={() => handleAck(a.id)}
+                          className="text-xs px-2 py-1 rounded bg-primary-600 text-white hover:bg-primary-700"
+                        >
+                          Ack
+                        </button>
+                      )}
+                      {!a.is_resolved && (
+                        <button
+                          type="button"
+                          onClick={() => handleResolve(a.id)}
+                          className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-700 hover:bg-slate-100"
+                        >
+                          Resolve
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <EmptyState
+            title="No active alerts"
+            description={
+              alertsUpdatedAt
+                ? `Last scan completed ${Math.max(
+                    0,
+                    Math.round((Date.now() - alertsUpdatedAt) / 60000),
+                  )} minute(s) ago`
+                : 'Waiting for first scan'
+            }
+          />
+        )}
+      </Card>
+
+      {/* Row 5 — Top keywords */}
+      {topKeywords.length > 0 && (
+        <Card title="Top keywords" subtitle="Most frequent across recent reports">
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {topKeywords.map(([kw, count]) => (
+              <button
+                key={kw}
+                type="button"
+                onClick={() => setFilterSearch(kw)}
+                className="flex-shrink-0 inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-xs transition-colors"
+              >
+                <span>{kw}</span>
+                <span className="font-mono text-slate-500">{count}</span>
+              </button>
+            ))}
+          </div>
+        </Card>
       )}
     </div>
   );

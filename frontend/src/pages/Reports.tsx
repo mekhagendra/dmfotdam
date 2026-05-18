@@ -4,6 +4,7 @@ import ThreatBadge from '../components/ThreatBadge';
 import { highlightKeywords } from '../utils/highlight';
 import { AnalysisResult } from '../services/detection.service';
 import { formatDateTime, getSydneyDateForFilename } from '../utils/formatDate';
+import { PageHeader, Card, EmptyState } from '../components/ui';
 
 const Reports: React.FC = () => {
   const { data: reports, isLoading } = useReports();
@@ -59,22 +60,23 @@ const Reports: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-panel rounded-lg border border-edge p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold text-slate-100">Analysis Reports</h2>
-          {reports && reports.length > 0 && (
+      <PageHeader
+        title="Analysis Reports"
+        subtitle="Detailed model output for every analysis run"
+        actions={
+          reports && reports.length > 0 ? (
             <button
               onClick={exportCSV}
-              className="text-sm px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white border border-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 focus:ring-offset-slate-100"
+              className="h-9 px-3 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Export CSV
             </button>
-          )}
-        </div>
+          ) : null
+        }
+      />
 
-        {isLoading ? (
-          <p className="text-slate-500">Loading reports...</p>
-        ) : reports && reports.length > 0 ? (
+      <Card loading={isLoading}>
+        {reports && reports.length > 0 ? (
           <div className="space-y-4">
             {reports.map((report) => {
               const isExpanded = expandedId === report.id;
@@ -313,12 +315,12 @@ const Reports: React.FC = () => {
             })}
           </div>
         ) : (
-          <p className="text-slate-500">
-            No analysis reports yet. Upload a document or analyze text to get
-            started.
-          </p>
+          <EmptyState
+            title="No analysis reports yet"
+            description="Upload a document or analyze text to get started."
+          />
         )}
-      </div>
+      </Card>
     </div>
   );
 };

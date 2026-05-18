@@ -6,6 +6,7 @@ import 'react-toastify/dist/ReactToastify.css';
 
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { DensityProvider } from './context/DensityContext';
 import Layout from './components/Layout';
 import Overview from './pages/Dashboard';
 import Analyse from './pages/Analyse';
@@ -169,10 +170,23 @@ const App: React.FC = () => {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <AppRoutes />
-            <ToastContainer position="top-right" autoClose={5000} />
-          </Router>
+          <DensityProvider>
+            <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <AppRoutes />
+              <ToastContainer
+                position="top-right"
+                autoClose={4000}
+                theme="light"
+                hideProgressBar={false}
+                newestOnTop
+                closeOnClick
+                pauseOnFocusLoss
+                draggable
+                pauseOnHover
+                toastClassName="!rounded-lg !shadow-md !border !border-slate-200 !text-sm"
+              />
+            </Router>
+          </DensityProvider>
         </AuthProvider>
       </QueryClientProvider>
     </GoogleOAuthProvider>

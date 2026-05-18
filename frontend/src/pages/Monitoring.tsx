@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { useLocation } from 'react-router-dom';
 import { useSources, useCreateSource, useDeleteSource, useAlerts } from '../hooks/useDetection';
 import AlertList from '../components/AlertList';
 import { useAuth } from '../context/AuthContext';
+import { PageHeader, Card, LiveIndicator, FilterBar, normalizeSeverity } from '../components/ui';
+import { SHORTCUT_EVENTS } from '../hooks/useKeyboardShortcuts';
 
 interface SourceFormData {
   name: string;
@@ -26,12 +29,52 @@ function normalizeRedditInput(value: string): string {
 
 const Monitoring: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState<string>('');
+  const [sourceFilter, setSourceFilter] = useState<string>('');
+  const [searchFilter, setSearchFilter] = useState<string>('');
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const { data: sources, isLoading: sourcesLoading } = useSources();
-  const { data: alerts, isLoading: alertsLoading } = useAlerts();
+  const { data: alerts, isLoading: alertsLoading, dataUpdatedAt: alertsUpdatedAt } = useAlerts();
   const createMutation = useCreateSource();
   const deleteMutation = useDeleteSource();
+  const location = useLocation();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = () => searchInputRef.current?.focus();
+    window.addEventListener(SHORTCUT_EVENTS.focusSearch, handler);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, handler);
+  }, []);
+
+  // Drill-through: accept `?severity=` and `?source=` from URL on mount.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const sev = params.get('severity');
+    const src = params.get('source');
+    if (sev) setSeverityFilter(sev);
+    if (src) setSourceFilter(src);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filteredAlerts = useMemo(() => {
+    const list = alerts ?? [];
+    const s = searchFilter.trim().toLowerCase();
+    return list.filter((a) => {
+      if (severityFilter && normalizeSeverity(a.threat_level) !== severityFilter) return false;
+      if (sourceFilter && a.source_name !== sourceFilter) return false;
+      if (s) {
+        const hay = `${a.title} ${a.description ?? ''} ${a.source ?? ''}`.toLowerCase();
+        if (!hay.includes(s)) return false;
+      }
+      return true;
+    });
+  }, [alerts, severityFilter, sourceFilter, searchFilter]);
+
+  const sourceOptions = useMemo(
+    () => (sources ?? []).map((s) => ({ value: s.name, label: s.name })),
+    [sources],
+  );
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<SourceFormData>({
     defaultValues: {
@@ -64,24 +107,30 @@ const Monitoring: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Monitoring Sources"
+        subtitle={
+          <>
+            <span>Manage your monitored feeds and review triggered alerts</span>
+            <LiveIndicator dataUpdatedAt={alertsUpdatedAt} />
+          </>
+        }
+        actions={
+          !isAdmin ? (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="h-9 px-3 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-md"
+            >
+              {showForm ? 'Cancel' : '+ Add Source'}
+            </button>
+          ) : null
+        }
+      />
+
       {/* Monitoring Sources */}
       <div className="bg-panel rounded-lg border border-edge p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-slate-100">Monitoring Sources</h2>
-          <div className="flex items-center gap-2">
-            {!isAdmin && (
-              <button
-                onClick={() => setShowForm(!showForm)}
-                className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium"
-              >
-                {showForm ? 'Cancel' : '+ Add Source'}
-              </button>
-            )}
-          </div>
-        </div>
-
         {isAdmin && (
-          <div className="mb-4 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-300">
+          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             Admin cannot add monitoring sources from this page.
           </div>
         )}
@@ -90,18 +139,18 @@ const Monitoring: React.FC = () => {
           <form onSubmit={handleSubmit(onSubmit)} className="mb-6 p-4 bg-panel-alt rounded-lg space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Name</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
                 <input
                   {...register('name', { required: 'Name is required' })}
-                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
                 {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Type</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Type</label>
                 <select
                   {...register('source_type')}
-                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="reddit">Reddit</option>
                   <option value="rss">RSS Feed</option>
@@ -109,7 +158,7 @@ const Monitoring: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   {sourceType === 'reddit' ? 'Subreddit' : sourceType === 'rss' ? 'Feed URL' : 'Website URL'}
                 </label>
                 <input
@@ -142,29 +191,29 @@ const Monitoring: React.FC = () => {
                       ? 'e.g., https://example.com/feed.xml'
                       : 'e.g., https://example.com/news'
                   }
-                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
                 {errors.source_value && <p className="text-red-500 text-xs mt-1">{errors.source_value.message}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Check Interval (seconds)
                 </label>
                 <input
                   {...register('check_interval', { valueAsNumber: true, min: 60, max: 86400 })}
                   type="number"
-                  className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Keywords (comma-separated)
               </label>
               <input
                 {...register('keywords')}
                 placeholder="e.g., security, threat, extremism"
-                className="w-full px-3 py-2 border border-slate-600 rounded-md bg-panel text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-md bg-white text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
             <button
@@ -187,13 +236,13 @@ const Monitoring: React.FC = () => {
                 className="flex items-center justify-between p-4 border border-edge rounded-lg hover:bg-panel-hover"
               >
                 <div>
-                  <h4 className="font-medium text-slate-200">{source.name}</h4>
+                  <h4 className="font-medium text-slate-900">{source.name}</h4>
                   <p className="text-sm text-slate-500 truncate max-w-md">{source.url}</p>
                   <div className="flex gap-2 mt-1">
-                    <span className="text-xs bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded">{source.source_type}</span>
+                    <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">{source.source_type}</span>
                     <span
                       className={`text-xs px-2 py-0.5 rounded ${
-                        source.is_active ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-500'
+                        source.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
                       }`}
                     >
                       {source.is_active ? 'Active' : 'Inactive'}
@@ -224,10 +273,27 @@ const Monitoring: React.FC = () => {
       </div>
 
       {/* Alerts */}
-      <div className="bg-panel rounded-lg border border-edge p-6">
-        <h2 className="text-xl font-semibold mb-4 text-slate-100">Alerts</h2>
-        <AlertList alerts={alerts ?? []} loading={alertsLoading} />
-      </div>
+      <Card
+        title={
+          <span className="flex items-center gap-3">
+            Alerts
+            <LiveIndicator dataUpdatedAt={alertsUpdatedAt} />
+          </span>
+        }
+      >
+        <FilterBar
+          severity={severityFilter}
+          source={sourceFilter}
+          search={searchFilter}
+          onSeverityChange={setSeverityFilter}
+          onSourceChange={setSourceFilter}
+          onSearchChange={setSearchFilter}
+          sourceOptions={sourceOptions}
+          searchInputRef={searchInputRef}
+          className="mb-3"
+        />
+        <AlertList alerts={filteredAlerts} loading={alertsLoading} />
+      </Card>
     </div>
   );
 };

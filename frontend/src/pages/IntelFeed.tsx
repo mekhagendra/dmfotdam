@@ -1,7 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import ThreatBadge from '../components/ThreatBadge';
 import { useAlerts, useCollectedItems, useResetScannedData, useRunScanNow, useSources } from '../hooks/useDetection';
 import { formatDateTime } from '../utils/formatDate';
+import { PageHeader, LiveIndicator } from '../components/ui';
 
 const DURATION_OPTIONS = [
   { label: 'Last 24 hours', valueMs: 24 * 60 * 60 * 1000 },
@@ -18,8 +20,19 @@ const IntelFeed: React.FC = () => {
   const [selectedCriticality, setSelectedCriticality] = useState<string>('');
   const runScanMutation = useRunScanNow();
   const resetDataMutation = useResetScannedData();
-  const { data: alerts, isLoading: alertsLoading } = useAlerts();
+  const { data: alerts, isLoading: alertsLoading, dataUpdatedAt: alertsUpdatedAt } = useAlerts();
   const { data: sources } = useSources();
+  const location = useLocation();
+
+  // Drill-through: accept `?source=` and `?severity=` from URL on mount.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const src = params.get('source');
+    const sev = params.get('severity');
+    if (src) setSelectedSourceName(src);
+    if (sev) setSelectedCriticality(sev);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const selectedDays = Math.max(1, Math.round(durationFilterMs / (24 * 60 * 60 * 1000)));
   const { data: collectedItems, isLoading: itemsLoading } = useCollectedItems(selectedDays, 300);
 
@@ -147,66 +160,70 @@ const IntelFeed: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900">Monitor</h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <select
-            value={durationFilterMs}
-            onChange={(e) => setDurationFilterMs(Number(e.target.value))}
-            className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            aria-label="Date range filter"
-          >
-            {DURATION_OPTIONS.map((opt) => (
-              <option key={opt.valueMs} value={opt.valueMs}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={selectedSourceName}
-            onChange={(e) => setSelectedSourceName(e.target.value)}
-            className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[200px]"
-            aria-label="Source filter"
-          >
-            <option value="">All Sources</option>
-            {sourceOptions.map((source) => (
-              <option key={source.id} value={source.name}>
-                {source.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={selectedCriticality}
-            onChange={(e) => setSelectedCriticality(e.target.value)}
-            className="px-3 py-2 border border-slate-300 rounded-md text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[170px]"
-            aria-label="Criticality filter"
-          >
-            <option value="">All Criticality</option>
-            <option value="critical">CRITICAL</option>
-            <option value="high">HIGH</option>
-            <option value="medium">MEDIUM</option>
-            <option value="low">LOW</option>
-          </select>
-          <button
-            onClick={() => runScanMutation.mutate()}
-            disabled={runScanMutation.isLoading}
-            className="bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 text-sm font-medium disabled:opacity-50"
-          >
-            {runScanMutation.isLoading ? 'Running Scan...' : 'Run Scan Now'}
-          </button>
-          <button
-            onClick={handleResetData}
-            disabled={resetDataMutation.isLoading}
-            className="bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 text-sm font-medium disabled:opacity-50"
-          >
-            {resetDataMutation.isLoading ? 'Resetting...' : 'Clear History'}
-          </button>
-        </div>
-      </div>
-        </div>
+      <PageHeader
+        title="Monitor"
+        subtitle={
+          <>
+            <span>Live alerts and scanned items from your sources</span>
+            <LiveIndicator dataUpdatedAt={alertsUpdatedAt} />
+          </>
+        }
+        actions={
+          <>
+            <select
+              value={durationFilterMs}
+              onChange={(e) => setDurationFilterMs(Number(e.target.value))}
+              className="h-9 px-3 text-sm border border-slate-200 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              aria-label="Date range filter"
+            >
+              {DURATION_OPTIONS.map((opt) => (
+                <option key={opt.valueMs} value={opt.valueMs}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedSourceName}
+              onChange={(e) => setSelectedSourceName(e.target.value)}
+              className="h-9 px-3 text-sm border border-slate-200 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[180px]"
+              aria-label="Source filter"
+            >
+              <option value="">All Sources</option>
+              {sourceOptions.map((source) => (
+                <option key={source.id} value={source.name}>
+                  {source.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedCriticality}
+              onChange={(e) => setSelectedCriticality(e.target.value)}
+              className="h-9 px-3 text-sm border border-slate-200 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[150px]"
+              aria-label="Criticality filter"
+            >
+              <option value="">All Criticality</option>
+              <option value="critical">CRITICAL</option>
+              <option value="high">HIGH</option>
+              <option value="medium">MEDIUM</option>
+              <option value="low">LOW</option>
+            </select>
+            <button
+              onClick={() => runScanMutation.mutate()}
+              disabled={runScanMutation.isLoading}
+              className="h-9 px-3 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-md disabled:opacity-50"
+            >
+              {runScanMutation.isLoading ? 'Running Scan...' : 'Run Scan Now'}
+            </button>
+            <button
+              onClick={handleResetData}
+              disabled={resetDataMutation.isLoading}
+              className="h-9 px-3 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50"
+            >
+              {resetDataMutation.isLoading ? 'Resetting...' : 'Clear History'}
+            </button>
+          </>
+        }
+      />
 
       {sourceOptions.length === 0 && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">

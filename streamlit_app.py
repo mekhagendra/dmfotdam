@@ -21,12 +21,32 @@ import tempfile
 from pathlib import Path
 from collections import Counter
 from typing import Dict, Tuple, Optional, Any
+from dotenv import load_dotenv
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 import joblib
+
+# Load environment variables from .env (local dev)
+load_dotenv()
+
+# ============================================================================
+# Configuration & Secrets Management
+# ============================================================================
+
+def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Get config from Streamlit secrets, environment, or default."""
+    try:
+        return st.secrets.get(key, os.getenv(key, default))
+    except:
+        return os.getenv(key, default)
+
+DEBUG_MODE = get_config("DEBUG", "false").lower() == "true"
+MONGODB_URL = get_config("MONGODB_URL")
+API_BASE_URL = get_config("API_BASE_URL", "http://localhost:8080")
+SEED_ADMIN_USER = get_config("SEED_ADMIN_USER", "admin")
 
 # Page config
 st.set_page_config(
@@ -353,6 +373,12 @@ def main():
     
     st.success("✅ Models loaded successfully")
     
+    # Show connection status
+    if MONGODB_URL:
+        st.info("💾 Connected to MongoDB")
+    else:
+        st.warning("⚠️ MongoDB not configured — analysis will work, but no persistence") if DEBUG_MODE else None
+    
     # Sidebar controls
     st.sidebar.header("⚙️ Settings")
     model_choice = st.sidebar.selectbox(
@@ -370,6 +396,13 @@ def main():
     st.sidebar.markdown(
         "**About**: This system blends ML classification (70%) with rule-based keyword detection (30%) to identify threats."
     )
+    
+    # Debug info
+    if DEBUG_MODE:
+        with st.sidebar.expander("🐛 Debug Info"):
+            st.write(f"**MongoDB**: {'✅ Configured' if MONGODB_URL else '❌ Not configured'}")
+            st.write(f"**API Base URL**: {API_BASE_URL}")
+            st.write(f"**Model Dir**: {MODEL_DIR}")
     
     # Input tab selection
     tab1, tab2 = st.tabs(["📤 Upload File", "📝 Paste Text"])

@@ -170,6 +170,68 @@ Then open http://localhost:8501 and test file upload + analysis.
 
 ---
 
+## Environment Variables & Secrets
+
+### Local Development (`.env` file)
+
+Create a `.env` file in the project root:
+
+```bash
+# .env
+DEBUG=true
+MONGODB_URL=mongodb+srv://user:password@cluster.mongodb.net/tdm
+API_BASE_URL=http://localhost:8080
+SEED_ADMIN_USER=admin
+```
+
+The app automatically loads `.env` using `python-dotenv`.
+
+### Local Secrets (`.streamlit/secrets.toml`)
+
+For local testing with Streamlit secrets:
+
+```toml
+# .streamlit/secrets.toml (never commit this!)
+[app]
+debug = true
+
+[database]
+url = "mongodb+srv://user:password@cluster.mongodb.net/tdm"
+
+[api]
+base_url = "http://localhost:8080"
+```
+
+Access in code:
+```python
+DEBUG = get_config("DEBUG", "false").lower() == "true"
+MONGODB_URL = get_config("MONGODB_URL")
+```
+
+### Streamlit Cloud Secrets
+
+After deploying to Streamlit Cloud:
+
+1. Go to your app dashboard
+2. Click **Manage app** (top right)
+3. Click **Secrets** tab
+4. Paste your secrets (TOML format):
+```toml
+[database]
+url = "mongodb+srv://username:password@cluster.mongodb.net/tdm"
+
+[api]
+base_url = "https://your-api.herokuapp.com"
+
+[app]
+debug = false
+```
+5. Click **Save**
+
+Streamlit Cloud will restart the app and load the secrets.
+
+---
+
 ## Next Steps
 
 - ✅ Deploy to Streamlit Cloud

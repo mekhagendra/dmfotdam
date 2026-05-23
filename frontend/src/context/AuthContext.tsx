@@ -1,11 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authService, UserProfile } from '../services/auth.service';
 
+export type LoginResult =
+  | { kind: 'authenticated'; user: UserProfile }
+  | { kind: 'otp_required' };
+
 interface AuthContextType {
   user: UserProfile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<UserProfile>;
+  login: (username: string, password: string) => Promise<LoginResult>;
+  loginVerifyOtp: (username: string, otp: string) => Promise<UserProfile>;
   register: (username: string, email: string, password: string, fullName?: string) => Promise<void>;
   googleLogin: (credential: string) => Promise<UserProfile>;
   logout: () => void;
@@ -39,11 +44,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadUser();
   }, [loadUser]);
 
-  const login = async (username: string, password: string) => {
-    await authService.login({ username, password });
-    const profile = await authService.getProfile();
-    setUser(profile);
-    return profile;
+  const login = async (username: string, password: string): Promise<LoginResult> => {
+    const res = await authService.login({ username, password });
+    if ('otp_required' in res) {
+      return { kind: 'otp_required' };
+    }
+    setUser(res.user);
+    return { kind: 'authenticated', user: res.user };
+  };
+
+  const loginVerifyOtp = async (username: string, otp: string) => {
+    const res = await authService.loginVerifyOtp({ username, otp });
+    setUser(res.user);
+    return res.user;
   };
 
   const register = async (username: string, email: string, password: string, fullName?: string) => {
@@ -68,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated: !!user,
         isLoading,
         login,
+        loginVerifyOtp,
         register,
         googleLogin,
         logout,

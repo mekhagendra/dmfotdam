@@ -52,9 +52,42 @@ export interface TokenResponse {
   user: UserProfile;
 }
 
+export interface LoginOtpRequiredResponse {
+  otp_required: true;
+  message?: string;
+}
+
+export interface LoginVerifyOtpRequest {
+  username: string;
+  otp: string;
+}
+
 export const authService = {
-  async login(data: LoginRequest): Promise<TokenResponse> {
-    const response = await api.post<TokenResponse>('/auth/login', data);
+  /**
+   * Step 1 of login. With the current backend the response is
+   * `{ otp_required: true }` — no token is issued until the OTP is verified
+   * via `loginVerifyOtp`. We still tolerate a legacy `TokenResponse` shape
+   * in case the backend is downgraded.
+   */
+  async login(
+    data: LoginRequest,
+  ): Promise<TokenResponse | LoginOtpRequiredResponse> {
+    const response = await api.post<TokenResponse | LoginOtpRequiredResponse>(
+      '/auth/login',
+      data,
+    );
+    if ('access_token' in response.data) {
+      localStorage.setItem('access_token', response.data.access_token);
+    }
+    return response.data;
+  },
+
+  /** Step 2 of login — submit the OTP that was emailed and receive the JWT. */
+  async loginVerifyOtp(data: LoginVerifyOtpRequest): Promise<TokenResponse> {
+    const response = await api.post<TokenResponse>(
+      '/auth/login/verify-otp',
+      data,
+    );
     localStorage.setItem('access_token', response.data.access_token);
     return response.data;
   },

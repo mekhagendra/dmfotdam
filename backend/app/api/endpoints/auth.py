@@ -23,6 +23,7 @@ from app.core.security import (
 )
 from app.models.user import (
     GoogleLoginRequest,
+    LoginOTPRequest,
     OTPRequest,
     OTPVerifyAndRegister,
     PasswordResetConfirmRequest,
@@ -327,8 +328,9 @@ async def register_legacy(payload: OTPVerifyAndRegister) -> UserPublic:
     return await verify_otp_register(payload)
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(payload: UserLogin) -> TokenResponse:
+@router.post("/login")
+async def login(payload: UserLogin) -> dict:
+    """Validate username/password and send OTP to user's email."""
     user = await users_col().find_one({"username": payload.username})
     if not user or not user.get("hashed_password"):
         raise HTTPException(
@@ -348,6 +350,46 @@ async def login(payload: UserLogin) -> TokenResponse:
     if user_status != "active" or not is_active:
         raise HTTPException(status_code=403, detail="Your account is pending admin approval")
 
+    # Generate OTP and email it
+    email = user["email"]
+    otp = _generate_otp()
+    expires_at = datetime.now(timezone.utc).timestamp() + (_settings.OTP_EXPIRE_MINUTES * 60)
+    await _otp_col().update_one(
+        _otp_lookup(email, "login"),
+        {
+            "$set": {
+                "otp": otp,
+                "purpose": "login",
+                "username": user["username"],
+                "expires_at": expires_at,
+                "verified": False,
+                "created_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+    await _send_email(
+        to=email,
+        subject="Your Login OTP Code",
+        body=f"Your OTP code for login is: {otp}\nThis code expires in {_settings.OTP_EXPIRE_MINUTES} minutes.",
+    )
+    return {"otp_required": True, "message": "OTP sent to your email. Please verify to complete login."}
+
+
+@router.post("/login/verify-otp", response_model=TokenResponse)
+async def login_verify_otp(payload: LoginOTPRequest) -> TokenResponse:
+    """Verify OTP from login and issue JWT token."""
+    user = await users_col().find_one({"username": payload.username})
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or OTP")
+    email = user["email"]
+    otp_doc = await _otp_col().find_one(_otp_lookup(email, "login"))
+    if not otp_doc or otp_doc.get("otp") != payload.otp:
+        raise HTTPException(status_code=401, detail="Invalid OTP")
+    if otp_doc.get("expires_at", 0) < datetime.now(timezone.utc).timestamp():
+        raise HTTPException(status_code=401, detail="OTP expired")
+    # Mark OTP as used
+    await _otp_col().update_one(_otp_lookup(email, "login"), {"$set": {"verified": True}})
     token = create_access_token(subject=str(user["_id"]))
     return TokenResponse(
         access_token=token,

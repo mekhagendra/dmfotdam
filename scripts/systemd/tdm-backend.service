@@ -1,0 +1,50 @@
+[Unit]
+Description=TDM Backend – Terrorism Detection & Monitoring (FastAPI/Uvicorn)
+Documentation=https://github.com/your-org/tdm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=tdm
+Group=tdm
+WorkingDirectory=/opt/tdm/backend
+
+# Load production environment variables from .env
+EnvironmentFile=/opt/tdm/backend/.env
+
+# Restrict environment PATH to venv
+Environment=PATH=/opt/tdm/backend/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Single worker is required: APScheduler and WebSocket state must not be
+# duplicated across multiple OS processes. Uvicorn handles async concurrency.
+ExecStart=/opt/tdm/backend/venv/bin/uvicorn main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info \
+    --access-log \
+    --no-use-colors
+
+# Graceful reload on SIGHUP (used by update-app.sh)
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/opt/tdm/backend/data
+
+# Logging goes to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tdm-backend
+
+[Install]
+WantedBy=multi-user.target

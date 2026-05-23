@@ -5,7 +5,7 @@ import { authService } from '../services/auth.service';
 import { GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { toast } from 'react-toastify';
 
-type Step = 'login' | 'register-form' | 'otp-verify' | 'forgot-password';
+type Step = 'login' | 'login-otp' | 'register-form' | 'otp-verify' | 'forgot-password';
 
 const Login: React.FC = () => {
   const [step, setStep] = useState<Step>('login');
@@ -18,13 +18,14 @@ const Login: React.FC = () => {
 
   // OTP
   const [otp, setOtp] = useState('');
+  const [loginOtp, setLoginOtp] = useState('');
   const [resetOtp, setResetOtp] = useState('');
   const [resetPassword, setResetPassword] = useState('');
   const [confirmResetPassword, setConfirmResetPassword] = useState('');
   const [resetOtpSent, setResetOtpSent] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const { user, login, googleLogin, isAuthenticated, isLoading } = useAuth();
+  const { user, login, loginVerifyOtp, googleLogin, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
 
   // Redirect if already authenticated
@@ -43,14 +44,48 @@ const Login: React.FC = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const profile = await login(username, password);
-      if (profile.role === 'admin') {
+      const result = await login(username, password);
+      if (result.kind === 'otp_required') {
+        setLoginOtp('');
+        setStep('login-otp');
+        toast.info('Verification code sent to your email');
+      } else if (result.user.role === 'admin') {
         navigate('/admin/users');
       } else {
         navigate('/');
       }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoginVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const profile = await loginVerifyOtp(username, loginOtp);
+      setLoginOtp('');
+      if (profile.role === 'admin') {
+        navigate('/admin/users');
+      } else {
+        navigate('/');
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'OTP verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendLoginOtp = async () => {
+    setLoading(true);
+    try {
+      await login(username, password);
+      toast.success('New code sent');
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Could not resend code');
     } finally {
       setLoading(false);
     }
@@ -249,6 +284,61 @@ const Login: React.FC = () => {
                 className="text-primary-600 hover:text-primary-700 text-sm"
               >
                 Don&apos;t have an account? Register
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ============ LOGIN OTP ============ */}
+        {step === 'login-otp' && (
+          <>
+            <h2 className="text-xl font-semibold mb-2 text-slate-900">Verify Sign-In</h2>
+            <p className="text-sm text-slate-500 mb-6">
+              Enter the 6-digit code we just emailed to the address on file for <strong>{username}</strong>.
+            </p>
+
+            <form onSubmit={handleLoginVerifyOtp} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Verification Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={loginOtp}
+                  onChange={(e) => setLoginOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className={`${inputClass} text-center text-2xl tracking-[0.5em] font-mono`}
+                  required
+                  autoFocus
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading || loginOtp.length < 6}
+                className="w-full bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 disabled:opacity-50 font-medium"
+              >
+                {loading ? 'Verifying...' : 'Verify & Sign In'}
+              </button>
+            </form>
+
+            <div className="mt-4 flex justify-between text-sm">
+              <button
+                onClick={() => {
+                  setLoginOtp('');
+                  setStep('login');
+                }}
+                className="text-slate-500 hover:text-slate-700"
+                disabled={loading}
+              >
+                &larr; Back
+              </button>
+              <button
+                onClick={handleResendLoginOtp}
+                disabled={loading}
+                className="text-primary-600 hover:text-primary-700 disabled:opacity-50"
+              >
+                Resend code
               </button>
             </div>
           </>

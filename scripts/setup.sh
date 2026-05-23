@@ -47,14 +47,10 @@ echo "Frontend setup complete!"
 
 cd ..
 
-# Setup with Docker (optional)
-echo "Docker setup available..."
-echo "To run with Docker: docker-compose -f docker/docker-compose.yml up -d"
-
 echo "Setup complete!"
 echo ""
 echo "Next steps:"
-echo "1. Update .env file with your configuration"
-echo "2. Start the backend: cd backend && source venv/bin/activate && python main.py"
-echo "3. Start the frontend: cd frontend && npm start"
-echo "4. Or use Docker: docker-compose -f docker/docker-compose.yml up -d"
+echo "1. Update backend/.env with your configuration"
+echo "2. Start backend:  cd backend && source venv/bin/activate && python main.py"
+echo "3. Start frontend: cd frontend && npm start"
+echo "For production deploy on Vultr: see scripts/vultr-deploy.sh"

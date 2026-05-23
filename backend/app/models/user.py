@@ -90,6 +90,12 @@ class PasswordResetConfirmRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=200)
 
 
+class LoginOTPRequest(BaseModel):
+    """Verify OTP for login after username/password validation."""
+    username: str
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
 class GoogleLoginRequest(BaseModel):
     """Frontend sends the Google credential (ID-token string)."""
     credential: str

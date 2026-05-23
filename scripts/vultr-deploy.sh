@@ -101,7 +101,7 @@ if [[ ! -f "$APP_ROOT/backend/.env" ]]; then
     echo ""
     echo "  Minimum fields to update:"
     echo "    ENVIRONMENT          → production"
-    echo "    ALLOWED_HOSTS        → [\"https://shadow-link.dynv6.net\"]"
+    echo "    ALLOWED_HOSTS        → [\"https://tdmapp.v6.rocks\"]"
     echo "    MONGODB_URL          → your Atlas connection string"
     echo "    SECRET_KEY           → run: openssl rand -hex 32"
     echo "    SEED_ADMIN_PASSWORD  → strong password"
@@ -143,7 +143,7 @@ systemctl enable nginx
 systemctl reload nginx
 
 # ── 9. SSL via Let's Encrypt ─────────────────────────────────────────────────
-DOMAIN="${TDM_DOMAIN:-shadow-link.dynv6.net}"
+DOMAIN="${TDM_DOMAIN:-tdmapp.v6.rocks}"
 info "Obtaining Let's Encrypt certificate for $DOMAIN ..."
 certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
     --email "${CERTBOT_EMAIL:-admin@${DOMAIN}}" --redirect || \
@@ -170,8 +170,8 @@ if [[ -n "$DOMAIN" ]]; then
     echo "  Frontend :  https://${DOMAIN}"
     echo "  API docs  :  (disabled in production)"
 else
-    echo "  Frontend :  https://shadow-link.dynv6.net"
-    echo "  API health:  https://shadow-link.dynv6.net/health"
+    echo "  Frontend :  https://tdmapp.v6.rocks"
+    echo "  API health:  https://tdmapp.v6.rocks/health"
 fi
 echo ""
 echo "  Logs     :  journalctl -u tdm-backend -f"

@@ -3,17 +3,15 @@
 # TDM – Terrorism Detection & Monitoring System
 # Vultr Ubuntu 24.04 LTS x64 – Initial Server Provisioning & Deploy Script
 #
-# Usage (on fresh Vultr instance, as root):
-#   1. Upload your .env.production to the server once:
-#        scp backend/.env.production root@<server-ip>:/root/tdm.env.production
+# Server has IPv6 only (no IPv4). SSH using brackets around the address:
+#   ssh root@[2001:19f0:5c00:4e7d:5400:06ff:fe2e:a9bd]
 #
-#   2. SSH in and run:
-#        ssh root@<server-ip>
-#        export GIT_REPO=https://github.com/<your-user>/<your-repo>.git
-#        export CERTBOT_EMAIL=kneupane32@gmail.com
-#        curl -fsSL https://raw.githubusercontent.com/<your-user>/<your-repo>/main/scripts/vultr-deploy.sh | bash
-#      or after manual upload:
-#        bash /root/vultr-deploy.sh
+# One-time setup on the server:
+#   git clone https://github.com/<your-user>/<your-repo>.git /opt/tdm
+#   bash /opt/tdm/scripts/vultr-deploy.sh
+#
+#   The script will pause on first run so you can fill in /opt/tdm/backend/.env
+#   then re-run:  bash /opt/tdm/scripts/vultr-deploy.sh
 #
 # Subsequent code updates:
 #   bash /opt/tdm/scripts/update-app.sh
@@ -32,17 +30,11 @@ die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 [[ -f /etc/os-release ]] && source /etc/os-release
 [[ "${VERSION_CODENAME:-}" == "noble" ]] || warn "Script tested on Ubuntu 24.04 (noble). Proceeding anyway."
 
-GIT_REPO="${GIT_REPO:-}"
-[[ -n "$GIT_REPO" ]] || die "Set the git repo URL before running:  export GIT_REPO=https://github.com/<user>/<repo>.git"
-
-# ── 0. Clone or update repo ──────────────────────────────────────────────────
-if [[ -d "$APP_ROOT/.git" ]]; then
-    info "Repo already cloned — pulling latest code ..."
-    git -C "$APP_ROOT" pull --ff-only
-else
-    info "Cloning repo to $APP_ROOT ..."
-    git clone "$GIT_REPO" "$APP_ROOT"
-fi
+# ── 0. Verify repo is cloned ─────────────────────────────────────────────────
+[[ -d "$APP_ROOT/.git" ]] || die "Repo not found at $APP_ROOT. Clone it first:\n  git clone https://github.com/<user>/<repo>.git $APP_ROOT"
+info "Repo found at $APP_ROOT."
+git -C "$APP_ROOT" fetch --quiet
+git -C "$APP_ROOT" reset --hard origin/main --quiet 2>/dev/null || git -C "$APP_ROOT" reset --hard origin/master --quiet
 
 # ── 1. System packages ───────────────────────────────────────────────────────
 info "Updating system packages ..."
@@ -95,15 +87,30 @@ if [[ -d "$APP_ROOT/backend/data/models" ]]; then
 fi
 
 # ── 5. Production .env ───────────────────────────────────────────────────────
-# .env.production is NOT in git (contains secrets). Upload it once with:
-#   scp backend/.env.production root@<server-ip>:/root/tdm.env.production
+# .env is NOT in git. On first run we copy .env.example so the user can fill it
+# in, then re-run this script.
 if [[ ! -f "$APP_ROOT/backend/.env" ]]; then
-    if [[ -f /root/tdm.env.production ]]; then
-        cp /root/tdm.env.production "$APP_ROOT/backend/.env"
-        info "Installed .env from /root/tdm.env.production"
-    else
-        die "No .env found. Upload it first:  scp backend/.env.production root@<server-ip>:/root/tdm.env.production"
-    fi
+    cp "$APP_ROOT/backend/.env.example" "$APP_ROOT/backend/.env"
+    echo ""
+    echo -e "${YELLOW}══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  ACTION REQUIRED — fill in production credentials${NC}"
+    echo -e "${YELLOW}══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "  Open the file and set all values:"
+    echo "    nano /opt/tdm/backend/.env"
+    echo ""
+    echo "  Minimum fields to update:"
+    echo "    ENVIRONMENT          → production"
+    echo "    ALLOWED_HOSTS        → [\"https://shadow-link.dynv6.net\"]"
+    echo "    MONGODB_URL          → your Atlas connection string"
+    echo "    SECRET_KEY           → run: openssl rand -hex 32"
+    echo "    SEED_ADMIN_PASSWORD  → strong password"
+    echo "    SMTP_USER / PASSWORD → your Gmail + app password"
+    echo "    GOOGLE_CLIENT_ID/SECRET / GOOGLE_REDIRECT_URI"
+    echo ""
+    echo "  Then re-run:  bash /opt/tdm/scripts/vultr-deploy.sh"
+    echo ""
+    exit 0
 fi
 chmod 640 "$APP_ROOT/backend/.env"
 chown "$APP_USER":"$APP_USER" "$APP_ROOT/backend/.env"

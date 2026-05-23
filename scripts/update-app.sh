@@ -17,7 +17,9 @@ warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 
 # ── 0. Pull latest code from git ─────────────────────────────────────────────
 info "Pulling latest code from git ..."
-git -C "$APP_ROOT" pull --ff-only
+git -C "$APP_ROOT" fetch --quiet
+git -C "$APP_ROOT" reset --hard origin/main --quiet 2>/dev/null || \
+    git -C "$APP_ROOT" reset --hard origin/master --quiet
 
 # ── 1. Python dependencies ───────────────────────────────────────────────────
 info "Updating Python dependencies ..."
